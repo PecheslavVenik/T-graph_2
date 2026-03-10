@@ -1,0 +1,9 @@
+.git
+.gitignore
+.idea
+.mvn/wrapper/maven-wrapper.jar
+target
+**/target
+aml.db
+*.db
+.DS_Store

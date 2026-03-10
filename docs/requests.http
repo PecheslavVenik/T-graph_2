@@ -1,0 +1,57 @@
+@baseUrl = http://localhost:8080
+
+### Health
+GET {{baseUrl}}/actuator/health
+
+### Dictionary
+GET {{baseUrl}}/api/v1/graph/dictionary
+
+### Expand (1-hop)
+POST {{baseUrl}}/api/v1/graph/expand
+Content-Type: application/json
+
+{
+  "seeds": [
+    {"type": "PARTY_RK", "value": "PARTY_1001"}
+  ],
+  "direction": "OUTBOUND",
+  "maxNeighborsPerSeed": 10,
+  "maxNodes": 100,
+  "maxEdges": 100,
+  "includeAttributes": true
+}
+
+### Shortest path
+POST {{baseUrl}}/api/v1/graph/shortest-path
+Content-Type: application/json
+
+{
+  "source": {"type": "PARTY_RK", "value": "PARTY_1001"},
+  "target": {"type": "PARTY_RK", "value": "PARTY_1004"},
+  "direction": "OUTBOUND",
+  "maxDepth": 4
+}
+
+### Export JSON
+POST {{baseUrl}}/api/v1/graph/export?format=JSON
+Content-Type: application/json
+
+{
+  "nodes": [
+    {"nodeId":"N1","displayName":"Node 1","identifiers":{"party_rk":"PARTY_1"},"statuses":["VIP"],"attributes":{"a":1}}
+  ],
+  "edges": [
+    {"edgeId":"E1","fromNodeId":"N1","toNodeId":"N2","type":"TRANSFER","directed":true,"weight":10.5,"attributes":{"currency":"RUB"}}
+  ]
+}
+
+### Export CSV
+POST {{baseUrl}}/api/v1/graph/export?format=CSV
+Content-Type: application/json
+
+{
+  "nodes": [
+    {"nodeId":"N1","displayName":"Node 1"}
+  ],
+  "edges": []
+}

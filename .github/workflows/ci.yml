@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master", "develop", "codex/**"]
+  pull_request:
+    branches: ["main", "master", "develop"]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Compile
+        run: ./mvnw -q -DskipTests compile
+
+      - name: Test
+        run: ./mvnw -q test
