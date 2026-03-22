@@ -21,9 +21,8 @@ public class DuckPgqHealthIndicator implements HealthIndicator {
             return Health.up().withDetail("duckpgq.loaded", true).build();
         }
 
-        return Health.status("DEGRADED")
+        return Health.down()
             .withDetail("duckpgq.loaded", false)
-            .withDetail("mode", "sql_fallback")
             .build();
     }
 }

@@ -30,14 +30,15 @@ class GraphControllerIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void expand_shouldReturnOneHopGraph() throws Exception {
+    void expand_shouldReturnDuckPgqOneHopGraph() throws Exception {
         String payload = """
             {
               "seeds": [
-                {"type": "PARTY_RK", "value": "PARTY_1001"}
+                {"type": "PARTY_RK", "value": "PARTY_1002"}
               ],
+              "relationFamily": "PERSON_KNOWS_PERSON",
               "direction": "OUTBOUND",
-              "maxNeighborsPerSeed": 10,
+              "maxNeighborsPerSeed": 1,
               "maxNodes": 100,
               "maxEdges": 100,
               "includeAttributes": true
@@ -48,36 +49,33 @@ class GraphControllerIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(payload))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.nodes.length()").value(3))
-            .andExpect(jsonPath("$.edges.length()").value(2))
-            .andExpect(jsonPath("$.meta.source").value("SQL_FALLBACK"))
-            .andExpect(jsonPath("$.edges[*].type", hasItem("TRANSFER")));
+            .andExpect(jsonPath("$.nodes.length()").value(2))
+            .andExpect(jsonPath("$.edges.length()").value(1))
+            .andExpect(jsonPath("$.meta.source").value("DUCKPGQ"))
+            .andExpect(jsonPath("$.meta.relationFamily").value("PERSON_KNOWS_PERSON"))
+            .andExpect(jsonPath("$.meta.rankingStrategy").value("INVESTIGATION_DEFAULT"))
+            .andExpect(jsonPath("$.meta.warnings", hasItem("Per-seed neighbor budget filtered lower-ranked neighbors")))
+            .andExpect(jsonPath("$.edges[*].type", hasItem("KNOWS")));
     }
 
     @Test
-    void pgqProjection_shouldDuplicateOnlyUndirectedEdges() {
-        Integer undirectedCopies = jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM g_pgq_edges WHERE edge_id = 'E_REL_1001_1004'",
-            Integer.class
-        );
-        Integer directedCopies = jdbcTemplate.queryForObject(
+    void pgqProjection_shouldBuildRelationSpecificTables() {
+        Integer allKnowsCopies = jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM g_pgq_edges WHERE edge_id = 'E_TX_1001_1002'",
             Integer.class
         );
-        Integer reverseUndirected = jdbcTemplate.queryForObject(
-            """
-            SELECT COUNT(*)
-            FROM g_pgq_edges
-            WHERE edge_id = 'E_REL_1001_1004'
-              AND traversal_from_node_id = 'N_PARTY_1004'
-              AND traversal_to_node_id = 'N_PARTY_1001'
-            """,
+        Integer knowsCopies = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM g_pgq_edges_knows WHERE edge_id = 'E_TX_1001_1002'",
+            Integer.class
+        );
+        Integer relativeCopiesInsideKnows = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM g_pgq_edges_knows WHERE edge_id = 'E_REL_1001_1004'",
             Integer.class
         );
 
-        org.assertj.core.api.Assertions.assertThat(undirectedCopies).isEqualTo(2);
-        org.assertj.core.api.Assertions.assertThat(directedCopies).isEqualTo(1);
-        org.assertj.core.api.Assertions.assertThat(reverseUndirected).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(allKnowsCopies).isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThat(knowsCopies).isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThat(relativeCopiesInsideKnows).isZero();
     }
 
     @Test
@@ -101,7 +99,8 @@ class GraphControllerIntegrationTest {
         String payload = """
             {
               "source": {"type": "PARTY_RK", "value": "PARTY_1001"},
-              "target": {"type": "PARTY_RK", "value": "PARTY_1004"},
+              "target": {"type": "PARTY_RK", "value": "PARTY_1003"},
+              "relationFamily": "PERSON_KNOWS_PERSON",
               "direction": "OUTBOUND",
               "maxDepth": 4
             }
@@ -111,19 +110,21 @@ class GraphControllerIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(payload))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.path.hopCount").value(1))
+            .andExpect(jsonPath("$.path.hopCount").value(2))
             .andExpect(jsonPath("$.path.orderedNodeIds[0]").value("N_PARTY_1001"))
-            .andExpect(jsonPath("$.path.orderedNodeIds[1]").value("N_PARTY_1004"));
+            .andExpect(jsonPath("$.path.orderedNodeIds[2]").value("N_PARTY_1003"))
+            .andExpect(jsonPath("$.meta.source").value("DUCKPGQ"));
     }
 
     @Test
     void shortestPath_shouldReturnNotFoundWhenNoPath() throws Exception {
         String payload = """
             {
-              "source": {"type": "PARTY_RK", "value": "PARTY_1003"},
-              "target": {"type": "PARTY_RK", "value": "PARTY_1001"},
+              "source": {"type": "PARTY_RK", "value": "PARTY_1001"},
+              "target": {"type": "PARTY_RK", "value": "PARTY_1003"},
+              "relationFamily": "PERSON_SAME_CITY_PERSON",
               "direction": "OUTBOUND",
-              "maxDepth": 1
+              "maxDepth": 2
             }
             """;
 
@@ -135,11 +136,12 @@ class GraphControllerIntegrationTest {
     }
 
     @Test
-    void shortestPath_shouldTraverseUndirectedEdgeInReverseDirection() throws Exception {
+    void shortestPath_shouldTraverseUndirectedRelativeEdgeInReverseDirection() throws Exception {
         String payload = """
             {
               "source": {"type": "PARTY_RK", "value": "PARTY_1004"},
               "target": {"type": "PARTY_RK", "value": "PARTY_1001"},
+              "relationFamily": "PERSON_RELATIVE_PERSON",
               "direction": "OUTBOUND",
               "maxDepth": 2
             }
@@ -152,14 +154,14 @@ class GraphControllerIntegrationTest {
             .andExpect(jsonPath("$.path.hopCount").value(1))
             .andExpect(jsonPath("$.path.orderedNodeIds[0]").value("N_PARTY_1004"))
             .andExpect(jsonPath("$.path.orderedNodeIds[1]").value("N_PARTY_1001"))
-            .andExpect(jsonPath("$.meta.source").value("SQL_FALLBACK"));
+            .andExpect(jsonPath("$.meta.source").value("DUCKPGQ"));
     }
 
     @Test
     void dictionary_shouldReturnLegendData() throws Exception {
         mockMvc.perform(get("/api/v1/graph/dictionary"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.edgeTypes", hasItem("TRANSFER")))
+            .andExpect(jsonPath("$.edgeTypes", hasItem("KNOWS")))
             .andExpect(jsonPath("$.nodeStatuses", hasItem("BLACKLIST")));
     }
 
@@ -170,6 +172,7 @@ class GraphControllerIntegrationTest {
               "seeds": [
                 {"type": "PARTY_RK", "value": "PARTY_1001"}
               ],
+              "relationFamily": "PERSON_RELATIVE_PERSON",
               "direction": "INBOUND",
               "maxNeighborsPerSeed": 10,
               "maxNodes": 100,
@@ -182,79 +185,6 @@ class GraphControllerIntegrationTest {
                 .content(payload))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.edges[*].type", hasItem("RELATIVE")));
-    }
-
-    @Test
-    void expand_shouldMergeWithExistingGraph() throws Exception {
-        String payload = """
-            {
-              "seeds": [
-                {"type": "PARTY_RK", "value": "PARTY_1001"}
-              ],
-              "direction": "OUTBOUND",
-              "maxNeighborsPerSeed": 10,
-              "maxNodes": 100,
-              "maxEdges": 100,
-              "includeAttributes": true,
-              "existingGraph": {
-                "nodes": [
-                  {
-                    "nodeId": "N_PARTY_1001",
-                    "displayName": "Alice layout copy",
-                    "identifiers": {"custom":"C1"},
-                    "statuses": ["PINNED"],
-                    "attributes": {"x":123,"y":456}
-                  },
-                  {
-                    "nodeId": "N_LEGACY_1",
-                    "displayName": "Legacy node",
-                    "identifiers": {"legacy":"L1"},
-                    "statuses": ["ARCHIVED"],
-                    "attributes": {"x":1}
-                  }
-                ],
-                "edges": [
-                  {
-                    "edgeId": "E_TX_1001_1002",
-                    "fromNodeId": "N_PARTY_1001",
-                    "toNodeId": "N_PARTY_1002",
-                    "type": "TRANSFER",
-                    "directed": true,
-                    "weight": 1.0,
-                    "attributes": {"selected": true, "legacy": "keep"}
-                  },
-                  {
-                    "edgeId": "E_LEGACY_1",
-                    "fromNodeId": "N_LEGACY_1",
-                    "toNodeId": "N_PARTY_1001",
-                    "type": "LINK",
-                    "directed": false,
-                    "attributes": {"selected": true}
-                  }
-                ],
-                "meta": {
-                  "truncated": true,
-                  "executionMs": 1,
-                  "source": "SQL_FALLBACK"
-                }
-              }
-            }
-            """;
-
-        mockMvc.perform(post("/api/v1/graph/expand")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(payload))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.nodes.length()").value(4))
-            .andExpect(jsonPath("$.edges.length()").value(3))
-            .andExpect(jsonPath("$.nodes[*].nodeId", hasItem("N_LEGACY_1")))
-            .andExpect(jsonPath("$.edges[*].edgeId", hasItem("E_LEGACY_1")))
-            .andExpect(jsonPath("$.nodes[?(@.nodeId=='N_PARTY_1001')].attributes.x", hasItem(123)))
-            .andExpect(jsonPath("$.nodes[?(@.nodeId=='N_PARTY_1001')].statuses[*]", hasItem("PINNED")))
-            .andExpect(jsonPath("$.nodes[?(@.nodeId=='N_PARTY_1001')].statuses[*]", hasItem("BLACKLIST")))
-            .andExpect(jsonPath("$.edges[?(@.edgeId=='E_TX_1001_1002')].attributes.selected", hasItem(true)))
-            .andExpect(jsonPath("$.edges[?(@.edgeId=='E_TX_1001_1002')].attributes.legacy", hasItem("keep")))
-            .andExpect(jsonPath("$.meta.truncated").value(true));
     }
 
     @Test
@@ -275,7 +205,7 @@ class GraphControllerIntegrationTest {
                   "edgeId": "E1",
                   "fromNodeId": "N1",
                   "toNodeId": "N2",
-                  "type": "TRANSFER",
+                  "type": "KNOWS",
                   "directed": true,
                   "weight": 10.5,
                   "attributes": {"currency":"RUB"}
@@ -291,6 +221,29 @@ class GraphControllerIntegrationTest {
             .andExpect(header().string("Content-Disposition", containsString("graph-export.csv")))
             .andExpect(content().contentType("text/csv"))
             .andExpect(content().string(containsString("section,node_id,display_name")));
+    }
+
+    @Test
+    void export_shouldReturnNdjsonAttachment() throws Exception {
+        String payload = """
+            {
+              "nodes": [
+                {
+                  "nodeId": "N1",
+                  "displayName": "Node 1"
+                }
+              ],
+              "edges": []
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/export?format=NDJSON")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+            .andExpect(status().isOk())
+            .andExpect(header().string("Content-Disposition", containsString("graph-export.ndjson")))
+            .andExpect(content().contentType("application/x-ndjson"))
+            .andExpect(content().string(containsString("\"kind\":\"node\"")));
     }
 
     @Test

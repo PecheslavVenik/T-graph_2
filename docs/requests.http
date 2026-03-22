@@ -12,10 +12,11 @@ Content-Type: application/json
 
 {
   "seeds": [
-    {"type": "PARTY_RK", "value": "PARTY_1001"}
+    {"type": "PARTY_RK", "value": "PARTY_1002"}
   ],
+  "relationFamily": "PERSON_KNOWS_PERSON",
   "direction": "OUTBOUND",
-  "maxNeighborsPerSeed": 10,
+  "maxNeighborsPerSeed": 1,
   "maxNodes": 100,
   "maxEdges": 100,
   "includeAttributes": true
@@ -27,7 +28,8 @@ Content-Type: application/json
 
 {
   "source": {"type": "PARTY_RK", "value": "PARTY_1001"},
-  "target": {"type": "PARTY_RK", "value": "PARTY_1004"},
+  "target": {"type": "PARTY_RK", "value": "PARTY_1003"},
+  "relationFamily": "PERSON_KNOWS_PERSON",
   "direction": "OUTBOUND",
   "maxDepth": 4
 }
@@ -41,12 +43,23 @@ Content-Type: application/json
     {"nodeId":"N1","displayName":"Node 1","identifiers":{"party_rk":"PARTY_1"},"statuses":["VIP"],"attributes":{"a":1}}
   ],
   "edges": [
-    {"edgeId":"E1","fromNodeId":"N1","toNodeId":"N2","type":"TRANSFER","directed":true,"weight":10.5,"attributes":{"currency":"RUB"}}
+    {"edgeId":"E1","fromNodeId":"N1","toNodeId":"N2","type":"KNOWS","directed":true,"weight":10.5,"attributes":{"confidence":0.9}}
   ]
 }
 
 ### Export CSV
 POST {{baseUrl}}/api/v1/graph/export?format=CSV
+Content-Type: application/json
+
+{
+  "nodes": [
+    {"nodeId":"N1","displayName":"Node 1"}
+  ],
+  "edges": []
+}
+
+### Export NDJSON
+POST {{baseUrl}}/api/v1/graph/export?format=NDJSON
 Content-Type: application/json
 
 {

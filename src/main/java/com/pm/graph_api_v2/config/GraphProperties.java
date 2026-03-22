@@ -25,6 +25,14 @@ public class GraphProperties {
     @Max(10)
     private int defaultMaxDepth = 6;
 
+    @Min(100)
+    @Max(200000)
+    private int maxExpandCandidateEdges = 10000;
+
+    @Min(0)
+    @Max(100)
+    private int hubPenaltyPercent = 35;
+
     public int getDefaultMaxNeighborsPerSeed() {
         return defaultMaxNeighborsPerSeed;
     }
@@ -55,5 +63,21 @@ public class GraphProperties {
 
     public void setDefaultMaxDepth(int defaultMaxDepth) {
         this.defaultMaxDepth = defaultMaxDepth;
+    }
+
+    public int getMaxExpandCandidateEdges() {
+        return maxExpandCandidateEdges;
+    }
+
+    public void setMaxExpandCandidateEdges(int maxExpandCandidateEdges) {
+        this.maxExpandCandidateEdges = maxExpandCandidateEdges;
+    }
+
+    public int getHubPenaltyPercent() {
+        return hubPenaltyPercent;
+    }
+
+    public void setHubPenaltyPercent(int hubPenaltyPercent) {
+        this.hubPenaltyPercent = hubPenaltyPercent;
     }
 }

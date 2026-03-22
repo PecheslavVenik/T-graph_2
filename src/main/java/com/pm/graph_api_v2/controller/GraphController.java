@@ -7,10 +7,7 @@ import com.pm.graph_api_v2.dto.GraphExportFormat;
 import com.pm.graph_api_v2.dto.GraphExportRequest;
 import com.pm.graph_api_v2.dto.ShortestPathRequest;
 import com.pm.graph_api_v2.dto.ShortestPathResponse;
-import com.pm.graph_api_v2.service.GraphDictionaryService;
-import com.pm.graph_api_v2.service.GraphExpandService;
-import com.pm.graph_api_v2.service.GraphExportService;
-import com.pm.graph_api_v2.service.GraphPathService;
+import com.pm.graph_api_v2.service.InvestigationService;
 import jakarta.validation.Valid;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -28,40 +25,31 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/graph")
 public class GraphController {
 
-    private final GraphExpandService graphExpandService;
-    private final GraphPathService graphPathService;
-    private final GraphDictionaryService graphDictionaryService;
-    private final GraphExportService graphExportService;
+    private final InvestigationService investigationService;
 
-    public GraphController(GraphExpandService graphExpandService,
-                           GraphPathService graphPathService,
-                           GraphDictionaryService graphDictionaryService,
-                           GraphExportService graphExportService) {
-        this.graphExpandService = graphExpandService;
-        this.graphPathService = graphPathService;
-        this.graphDictionaryService = graphDictionaryService;
-        this.graphExportService = graphExportService;
+    public GraphController(InvestigationService investigationService) {
+        this.investigationService = investigationService;
     }
 
     @PostMapping("/expand")
     public GraphExpandResponse expand(@Valid @RequestBody GraphExpandRequest request) {
-        return graphExpandService.expand(request);
+        return investigationService.expand(request);
     }
 
     @PostMapping("/shortest-path")
     public ShortestPathResponse shortestPath(@Valid @RequestBody ShortestPathRequest request) {
-        return graphPathService.shortestPath(request);
+        return investigationService.shortestPath(request);
     }
 
     @GetMapping("/dictionary")
     public GraphDictionaryResponse dictionary() {
-        return graphDictionaryService.dictionary();
+        return investigationService.dictionary();
     }
 
     @PostMapping("/export")
     public ResponseEntity<byte[]> export(@Valid @RequestBody GraphExportRequest request,
                                          @RequestParam(defaultValue = "JSON") GraphExportFormat format) {
-        GraphExportService.ExportedGraph exported = graphExportService.export(request, format);
+        InvestigationService.ExportedGraph exported = investigationService.export(request, format);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(org.springframework.http.MediaType.parseMediaType(exported.contentType()));

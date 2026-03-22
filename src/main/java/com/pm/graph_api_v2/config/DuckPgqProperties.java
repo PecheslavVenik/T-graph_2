@@ -6,9 +6,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class DuckPgqProperties {
 
     private boolean enabled = true;
-    private boolean forceFallback = false;
     private boolean autoLoad = true;
-    private boolean failOnUnavailable = false;
+    private boolean preferLatest = false;
+    private boolean forceInstall = false;
+    private String repositoryUrl = "http://duckpgq.s3.eu-north-1.amazonaws.com";
 
     public boolean isEnabled() {
         return enabled;
@@ -16,14 +17,6 @@ public class DuckPgqProperties {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
-    }
-
-    public boolean isForceFallback() {
-        return forceFallback;
-    }
-
-    public void setForceFallback(boolean forceFallback) {
-        this.forceFallback = forceFallback;
     }
 
     public boolean isAutoLoad() {
@@ -34,11 +27,27 @@ public class DuckPgqProperties {
         this.autoLoad = autoLoad;
     }
 
-    public boolean isFailOnUnavailable() {
-        return failOnUnavailable;
+    public boolean isPreferLatest() {
+        return preferLatest;
     }
 
-    public void setFailOnUnavailable(boolean failOnUnavailable) {
-        this.failOnUnavailable = failOnUnavailable;
+    public void setPreferLatest(boolean preferLatest) {
+        this.preferLatest = preferLatest;
+    }
+
+    public String getRepositoryUrl() {
+        return repositoryUrl;
+    }
+
+    public void setRepositoryUrl(String repositoryUrl) {
+        this.repositoryUrl = repositoryUrl;
+    }
+
+    public boolean isForceInstall() {
+        return forceInstall;
+    }
+
+    public void setForceInstall(boolean forceInstall) {
+        this.forceInstall = forceInstall;
     }
 }

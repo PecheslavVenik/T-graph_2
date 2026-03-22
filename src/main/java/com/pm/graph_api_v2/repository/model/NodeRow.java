@@ -11,6 +11,9 @@ public record NodeRow(
     boolean blacklist,
     boolean vip,
     String employer,
+    String city,
+    double pagerankScore,
+    double hubScore,
     Map<String, Object> attrs
 ) {
 }

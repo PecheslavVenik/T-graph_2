@@ -63,7 +63,7 @@ public class GraphRepository {
             return List.of();
         }
 
-        String sql = "SELECT node_id, party_rk, person_id, phone_no, full_name, is_blacklist, is_vip, employer, attrs_json " +
+        String sql = "SELECT node_id, party_rk, person_id, phone_no, full_name, is_blacklist, is_vip, employer, city, pagerank_score, hub_score, attrs_json " +
             "FROM g_nodes WHERE node_id IN (" + placeholders(nodeIds.size()) + ") ORDER BY node_id";
 
         return jdbcTemplate.query(sql, nodeRowMapper, nodeIds.toArray());
@@ -74,7 +74,7 @@ public class GraphRepository {
             return List.of();
         }
 
-        String sql = "SELECT edge_id, from_node_id, to_node_id, edge_type, directed, tx_count, tx_sum, attrs_json " +
+        String sql = "SELECT edge_id, from_node_id, to_node_id, edge_type, directed, tx_count, tx_sum, relation_family, strength_score, evidence_count, attrs_json " +
             "FROM g_edges WHERE edge_id IN (" + placeholders(edgeIds.size()) + ") ORDER BY edge_id";
 
         return jdbcTemplate.query(sql, edgeRowMapper, edgeIds.toArray());
@@ -109,6 +109,9 @@ public class GraphRepository {
             rs.getBoolean("is_blacklist"),
             rs.getBoolean("is_vip"),
             rs.getString("employer"),
+            rs.getString("city"),
+            rs.getDouble("pagerank_score"),
+            rs.getDouble("hub_score"),
             readJsonMap(rs.getString("attrs_json"))
         );
     }
@@ -122,6 +125,9 @@ public class GraphRepository {
             rs.getBoolean("directed"),
             rs.getLong("tx_count"),
             rs.getDouble("tx_sum"),
+            rs.getString("relation_family"),
+            rs.getDouble("strength_score"),
+            rs.getLong("evidence_count"),
             readJsonMap(rs.getString("attrs_json"))
         );
     }

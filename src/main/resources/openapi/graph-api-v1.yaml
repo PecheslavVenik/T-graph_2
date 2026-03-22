@@ -1,14 +1,14 @@
 openapi: 3.1.0
 info:
-  title: Graph Explorer API
+  title: Investigation Graph API
   version: 1.0.0
-  description: API for 1-hop expansion, shortest path, dictionary and graph export.
+  description: DuckPGQ-only investigation graph API with smart 1-hop expansion and bounded export.
 servers:
   - url: /api/v1
 paths:
   /graph/expand:
     post:
-      summary: 1-hop expansion from seed identifiers
+      summary: Smart 1-hop expansion for investigation graph
       requestBody:
         required: true
         content:
@@ -26,7 +26,7 @@ paths:
           description: DuckPGQ is required but unavailable
   /graph/shortest-path:
     post:
-      summary: Find shortest path between two nodes
+      summary: Find shortest path between two nodes inside relation family
       requestBody:
         required: true
         content:
@@ -56,14 +56,14 @@ paths:
                 $ref: '#/components/schemas/GraphDictionaryResponse'
   /graph/export:
     post:
-      summary: Export rendered graph as JSON or CSV
+      summary: Export rendered graph as JSON, CSV or NDJSON
       parameters:
         - name: format
           in: query
           required: false
           schema:
             type: string
-            enum: [JSON, CSV]
+            enum: [JSON, CSV, NDJSON]
             default: JSON
       requestBody:
         required: true
@@ -81,6 +81,9 @@ paths:
             text/csv:
               schema:
                 type: string
+            application/x-ndjson:
+              schema:
+                type: string
 components:
   schemas:
     GraphExpandRequest:
@@ -93,12 +96,8 @@ components:
           maxItems: 100
           items:
             $ref: '#/components/schemas/SeedRef'
-        edgeTypes:
-          type: array
-          maxItems: 64
-          items:
-            type: string
-            minLength: 1
+        relationFamily:
+          $ref: '#/components/schemas/GraphRelationFamily'
         direction:
           $ref: '#/components/schemas/Direction'
         maxNeighborsPerSeed:
@@ -115,24 +114,9 @@ components:
           maximum: 5000
         includeAttributes:
           type: boolean
-        existingGraph:
-          $ref: '#/components/schemas/GraphEnvelope'
     GraphExpandResponse:
       type: object
       required: [nodes, edges, meta]
-      properties:
-        nodes:
-          type: array
-          items:
-            $ref: '#/components/schemas/GraphNode'
-        edges:
-          type: array
-          items:
-            $ref: '#/components/schemas/GraphEdge'
-        meta:
-          $ref: '#/components/schemas/GraphMeta'
-    GraphEnvelope:
-      type: object
       properties:
         nodes:
           type: array
@@ -152,12 +136,8 @@ components:
           $ref: '#/components/schemas/SeedRef'
         target:
           $ref: '#/components/schemas/SeedRef'
-        edgeTypes:
-          type: array
-          maxItems: 64
-          items:
-            type: string
-            minLength: 1
+        relationFamily:
+          $ref: '#/components/schemas/GraphRelationFamily'
         direction:
           $ref: '#/components/schemas/Direction'
         maxDepth:
@@ -228,6 +208,9 @@ components:
     SeedType:
       type: string
       enum: [PARTY_RK, PERSON_ID, PHONE_NO, NODE_ID]
+    GraphRelationFamily:
+      type: string
+      enum: [PERSON_KNOWS_PERSON, PERSON_RELATIVE_PERSON, PERSON_SAME_CITY_PERSON, ALL_RELATIONS]
     Direction:
       type: string
       enum: [OUTBOUND, INBOUND, BOTH]
@@ -277,7 +260,7 @@ components:
           additionalProperties: true
     GraphMeta:
       type: object
-      required: [truncated, executionMs, source]
+      required: [truncated, executionMs, source, relationFamily, rankingStrategy, candidateEdgeCount, returnedNodeCount, returnedEdgeCount, warnings]
       properties:
         truncated:
           type: boolean
@@ -285,7 +268,21 @@ components:
           type: integer
         source:
           type: string
-          enum: [DUCKPGQ, SQL_FALLBACK]
+          enum: [DUCKPGQ]
+        relationFamily:
+          $ref: '#/components/schemas/GraphRelationFamily'
+        rankingStrategy:
+          type: string
+        candidateEdgeCount:
+          type: integer
+        returnedNodeCount:
+          type: integer
+        returnedEdgeCount:
+          type: integer
+        warnings:
+          type: array
+          items:
+            type: string
     Path:
       type: object
       required: [orderedNodeIds, orderedEdgeIds, hopCount]

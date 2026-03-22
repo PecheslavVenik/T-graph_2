@@ -38,6 +38,9 @@ public class GraphDtoMapper {
         if (includeAttributes) {
             attributes.putAll(row.attrs());
             putAttributeIfPresent(attributes, "employer", row.employer());
+            putAttributeIfPresent(attributes, "city", row.city());
+            attributes.put("pagerankScore", row.pagerankScore());
+            attributes.put("hubScore", row.hubScore());
         }
 
         String displayName = firstNonBlank(row.fullName(), row.partyRk(), row.personId(), row.phoneNo(), nodeId);
@@ -60,6 +63,9 @@ public class GraphDtoMapper {
             attributes.putAll(row.attrs());
             attributes.put("txCount", row.txCount());
             attributes.put("txSum", row.txSum());
+            putAttributeIfPresent(attributes, "relationFamily", row.relationFamily());
+            attributes.put("strengthScore", row.strengthScore());
+            attributes.put("evidenceCount", row.evidenceCount());
         }
 
         return new GraphEdgeDto(
@@ -68,7 +74,7 @@ public class GraphDtoMapper {
             row.toNodeId(),
             row.edgeType(),
             row.directed(),
-            row.txSum(),
+            row.strengthScore(),
             attributes
         );
     }

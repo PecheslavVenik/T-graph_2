@@ -10,6 +10,9 @@ public record EdgeRow(
     boolean directed,
     long txCount,
     double txSum,
+    String relationFamily,
+    double strengthScore,
+    long evidenceCount,
     Map<String, Object> attrs
 ) {
 }

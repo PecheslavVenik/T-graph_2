@@ -1,12 +1,14 @@
 package com.pm.graph_api_v2.repository;
 
 import com.pm.graph_api_v2.dto.Direction;
+import com.pm.graph_api_v2.dto.GraphRelationFamily;
+import com.pm.graph_api_v2.config.DuckPgqProperties;
 import com.pm.graph_api_v2.repository.model.EdgeRow;
 import com.pm.graph_api_v2.repository.model.PathRow;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 import tools.jackson.core.type.TypeReference;
@@ -18,34 +20,56 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Repository
 public class DuckPgqGraphQueryRepository {
 
     private static final Logger log = LoggerFactory.getLogger(DuckPgqGraphQueryRepository.class);
-    private static final String DUCKPGQ_GRAPH_NAME = "aml_graph";
+    private static final String VERTEX_LABEL = "Person";
+    private static final String EDGE_LABEL = "Connection";
+
+    private static final String ALL_GRAPH_NAME = "aml_graph_all";
+    private static final String KNOWS_GRAPH_NAME = "aml_graph_knows";
+    private static final String RELATIVE_GRAPH_NAME = "aml_graph_relative";
+    private static final String SAME_CITY_GRAPH_NAME = "aml_graph_same_city";
+
+    private static final String ALL_PROJECTION_TABLE = "g_pgq_edges";
+    private static final String KNOWS_PROJECTION_TABLE = "g_pgq_edges_knows";
+    private static final String RELATIVE_PROJECTION_TABLE = "g_pgq_edges_relative";
+    private static final String SAME_CITY_PROJECTION_TABLE = "g_pgq_edges_same_city";
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
-
+    private final DuckPgqProperties duckPgqProperties;
     private final RowMapper<EdgeRow> edgeRowMapper = this::mapEdgeRow;
 
-    public DuckPgqGraphQueryRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    public DuckPgqGraphQueryRepository(JdbcTemplate jdbcTemplate,
+                                      ObjectMapper objectMapper,
+                                      DuckPgqProperties duckPgqProperties) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+        this.duckPgqProperties = duckPgqProperties;
+    }
+
+    public void initialize() {
+        jdbcTemplate.execute((ConnectionCallback<Void>) connection -> {
+            loadDuckPgq(connection);
+            recreateProjectionTables(connection);
+            ensureGraphs(connection);
+            return null;
+        });
     }
 
     public boolean isDuckPgqLoaded() {
         return jdbcTemplate.execute((ConnectionCallback<Boolean>) connection -> {
-            tryLoadDuckPgq(connection);
             try (PreparedStatement ps = connection.prepareStatement(
                 """
                 SELECT loaded
@@ -62,383 +86,372 @@ public class DuckPgqGraphQueryRepository {
     }
 
     public List<EdgeRow> findExpandEdges(Collection<String> seedNodeIds,
+                                         GraphRelationFamily relationFamily,
                                          Direction direction,
-                                         List<String> edgeTypes) {
+                                         int candidateLimit) {
         if (seedNodeIds.isEmpty()) {
             return List.of();
         }
 
         return jdbcTemplate.execute((ConnectionCallback<List<EdgeRow>>) connection -> {
-            ensureDuckPgqReady(connection);
-
-            ExpandQuery expandQuery = buildExpandQuery(seedNodeIds, direction, edgeTypes);
-            try (PreparedStatement ps = connection.prepareStatement(expandQuery.sql())) {
-                bindParameters(ps, expandQuery.args());
-                try (ResultSet rs = ps.executeQuery()) {
-                    List<EdgeRow> rows = new ArrayList<>();
-                    int rowNum = 0;
-                    while (rs.next()) {
-                        rows.add(edgeRowMapper.mapRow(rs, rowNum++));
-                    }
-                    return rows;
+            String sql = buildExpandQuery(graphName(relationFamily), seedNodeIds, direction, candidateLimit);
+            try (Statement statement = connection.createStatement();
+                 ResultSet rs = statement.executeQuery(sql)) {
+                List<EdgeRow> rows = new ArrayList<>();
+                int rowNum = 0;
+                while (rs.next()) {
+                    rows.add(edgeRowMapper.mapRow(rs, rowNum++));
                 }
+                return rows;
             }
         });
     }
 
     public Optional<PathRow> findShortestPath(String sourceNodeId,
                                               String targetNodeId,
+                                              GraphRelationFamily relationFamily,
                                               Direction direction,
                                               int maxDepth) {
         return jdbcTemplate.execute((ConnectionCallback<Optional<PathRow>>) connection -> {
-            ensureDuckPgqReady(connection);
-
-            String pattern = shortestPattern(direction);
-            String sql = String.format(
-                """
-                WITH path_result AS (
-                    FROM GRAPH_TABLE (
-                      %s
-                      MATCH p = ANY SHORTEST (a WHERE a.node_id = ?)%s{1,%d}(b WHERE b.node_id = ?)
-                      COLUMNS (
-                        vertices(p) AS vertices_rowid,
-                        edges(p) AS edges_rowid,
-                        path_length(p) AS hop_count
-                      )
-                    )
-                    ORDER BY hop_count
-                    LIMIT 1
-                ),
-                path_nodes AS (
-                    SELECT list(n.node_id ORDER BY u.ord) AS node_ids
-                    FROM path_result pr
-                    CROSS JOIN UNNEST(pr.vertices_rowid) WITH ORDINALITY AS u(node_rowid, ord)
-                    JOIN g_nodes n ON n.rowid = u.node_rowid
-                ),
-                path_edges AS (
-                    SELECT list(e.edge_id ORDER BY u.ord) AS edge_ids
-                    FROM path_result pr
-                    CROSS JOIN UNNEST(pr.edges_rowid) WITH ORDINALITY AS u(edge_rowid, ord)
-                    JOIN g_pgq_edges e ON e.rowid = u.edge_rowid
-                )
-                SELECT pn.node_ids, pe.edge_ids, pr.hop_count
-                FROM path_result pr
-                JOIN path_nodes pn ON TRUE
-                JOIN path_edges pe ON TRUE
-                """,
-                DUCKPGQ_GRAPH_NAME,
-                pattern,
-                maxDepth
+            String projectionTable = projectionTable(relationFamily);
+            String sql = buildShortestPathQuery(
+                graphName(relationFamily),
+                sourceNodeId,
+                targetNodeId,
+                direction
             );
 
-            try (PreparedStatement ps = connection.prepareStatement(sql)) {
-                ps.setString(1, sourceNodeId);
-                ps.setString(2, targetNodeId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (!rs.next()) {
-                        return Optional.empty();
-                    }
-
-                    List<String> nodeIds = parseTextList(rs.getObject("node_ids"));
-                    List<String> edgeIds = parseTextList(rs.getObject("edge_ids"));
-                    int hopCount = asInt(rs.getObject("hop_count"));
-                    if (nodeIds.isEmpty()) {
-                        return Optional.empty();
-                    }
-                    return Optional.of(new PathRow(nodeIds, edgeIds, hopCount));
+            try (Statement statement = connection.createStatement();
+                 ResultSet rs = statement.executeQuery(sql)) {
+                if (!rs.next()) {
+                    return Optional.empty();
                 }
+
+                int hopCount = asInt(rs.getObject("hop_count"));
+                if (hopCount > Math.max(1, maxDepth)) {
+                    return Optional.empty();
+                }
+
+                List<Long> nodeRowIds = parseLongList(rs.getObject("vertices_rowid"));
+                List<Long> edgeRowIds = parseLongList(rs.getObject("edges_rowid"));
+                List<String> nodeIds = resolveNodeIdsByRowId(connection, nodeRowIds);
+                List<String> edgeIds = resolveEdgeIdsByRowId(connection, projectionTable, edgeRowIds);
+                if (nodeIds.isEmpty()) {
+                    return Optional.empty();
+                }
+                return Optional.of(new PathRow(nodeIds, edgeIds, hopCount));
             }
         });
     }
 
-    private ExpandQuery buildExpandQuery(Collection<String> seedNodeIds,
-                                         Direction direction,
-                                         List<String> edgeTypes) {
-        StringBuilder sql = new StringBuilder(
-            """
-            WITH matched_edges AS (
-                SELECT DISTINCT edge_id, edge_type
-                FROM GRAPH_TABLE (
-                  aml_graph
-            """
-        );
-
-        switch (direction) {
-            case OUTBOUND -> sql.append(
-                """
-                      MATCH (a)-[e]->(b)
-                      COLUMNS (
-                        a.node_id AS anchor_node_id,
-                        e.edge_id AS edge_id,
-                        e.edge_type AS edge_type
-                      )
-                    ) gt
-                    WHERE gt.anchor_node_id IN (
-                """
-            );
-            case INBOUND -> sql.append(
-                """
-                      MATCH (a)-[e]->(b)
-                      COLUMNS (
-                        b.node_id AS anchor_node_id,
-                        e.edge_id AS edge_id,
-                        e.edge_type AS edge_type
-                      )
-                    ) gt
-                    WHERE gt.anchor_node_id IN (
-                """
-            );
-            case BOTH -> sql.append(
-                """
-                      MATCH (a)-[e]-(b)
-                      COLUMNS (
-                        a.node_id AS from_anchor_node_id,
-                        b.node_id AS to_anchor_node_id,
-                        e.edge_id AS edge_id,
-                        e.edge_type AS edge_type
-                      )
-                    ) gt
-                    WHERE (
-                      gt.from_anchor_node_id IN (
-                """
-            );
-        }
-
-        List<Object> args = new ArrayList<>();
-        String placeholders = placeholders(seedNodeIds.size());
-        sql.append(placeholders).append(")");
-        args.addAll(seedNodeIds);
-
-        if (direction == Direction.BOTH) {
-            sql.append(" OR gt.to_anchor_node_id IN (").append(placeholders).append("))");
-            args.addAll(seedNodeIds);
-        }
-
-        appendEdgeTypeFilter(sql, args, edgeTypes, "gt.edge_type");
-        sql.append(
-            """
+    private String buildShortestPathQuery(String graphName,
+                                          String sourceNodeId,
+                                          String targetNodeId,
+                                          Direction direction) {
+        return """
+            FROM GRAPH_TABLE (
+              %s
+              MATCH p = ANY SHORTEST (a:%s WHERE a.node_id = %s)%s+(b:%s WHERE b.node_id = %s)
+              COLUMNS (
+                vertices(p) AS vertices_rowid,
+                edges(p) AS edges_rowid,
+                path_length(p) AS hop_count
+              )
             )
-            SELECT ge.edge_id, ge.from_node_id, ge.to_node_id, ge.edge_type, ge.directed, ge.tx_count, ge.tx_sum, ge.attrs_json
-            FROM g_edges ge
-            JOIN matched_edges me ON me.edge_id = ge.edge_id
-            ORDER BY ge.edge_id
-            """
+            SELECT *
+            """.formatted(
+            graphName,
+            VERTEX_LABEL,
+            sqlStringLiteral(sourceNodeId),
+            shortestPattern(direction),
+            VERTEX_LABEL,
+            sqlStringLiteral(targetNodeId)
         );
-
-        return new ExpandQuery(sql.toString(), args);
     }
 
-    private void ensureDuckPgqReady(Connection connection) throws SQLException {
-        if (!tryLoadDuckPgq(connection) && !isExtensionLoaded(connection)) {
-            throw new SQLException("duckpgq extension is not loaded on current connection");
-        }
-        refreshPgqEdgeProjectionIfStale(connection);
-        ensureDuckPgqGraph(connection);
+    private String buildExpandQuery(String graphName,
+                                    Collection<String> seedNodeIds,
+                                    Direction direction,
+                                    int candidateLimit) {
+        String seedFilter = inList(seedNodeIds);
+        String matchPattern = switch (direction) {
+            case OUTBOUND, INBOUND -> "MATCH (a:%s)-[e:%s]->(b:%s)".formatted(VERTEX_LABEL, EDGE_LABEL, VERTEX_LABEL);
+            case BOTH -> "MATCH (a:%s)-[e:%s]-(b:%s)".formatted(VERTEX_LABEL, EDGE_LABEL, VERTEX_LABEL);
+        };
+        String whereClause = switch (direction) {
+            case OUTBOUND -> "WHERE a.node_id IN (%s)".formatted(seedFilter);
+            case INBOUND -> "WHERE b.node_id IN (%s)".formatted(seedFilter);
+            case BOTH -> "WHERE a.node_id IN (%s) OR b.node_id IN (%s)".formatted(seedFilter, seedFilter);
+        };
+
+        return """
+            FROM GRAPH_TABLE (
+              %s
+              %s
+              %s
+              COLUMNS (
+                e.edge_id AS edge_id,
+                e.from_node_id AS from_node_id,
+                e.to_node_id AS to_node_id,
+                e.edge_type AS edge_type,
+                e.directed AS directed,
+                e.tx_count AS tx_count,
+                e.tx_sum AS tx_sum,
+                e.relation_family AS relation_family,
+                e.strength_score AS strength_score,
+                e.evidence_count AS evidence_count,
+                e.attrs_json AS attrs_json
+              )
+            )
+            SELECT DISTINCT *
+            ORDER BY strength_score DESC, evidence_count DESC, edge_id
+            LIMIT %d
+            """.formatted(
+            graphName,
+            matchPattern,
+            whereClause,
+            Math.max(1, candidateLimit)
+        );
     }
 
-    private void refreshPgqEdgeProjectionIfStale(Connection connection) throws SQLException {
-        ProjectionState state = projectionState(connection);
-        if (!state.stale()) {
-            return;
+    private String inList(Collection<String> values) {
+        return values.stream()
+            .map(this::sqlStringLiteral)
+            .collect(Collectors.joining(","));
+    }
+
+    private String sqlStringLiteral(String value) {
+        return "'" + value.replace("'", "''") + "'";
+    }
+
+    private void loadDuckPgq(Connection connection) throws SQLException {
+        try (Statement loadStatement = connection.createStatement()) {
+            try {
+                loadStatement.execute("LOAD duckpgq");
+                log.info("duckpgq extension loaded successfully");
+                return;
+            } catch (SQLException loadException) {
+                log.info("LOAD duckpgq failed, trying install flow: {}", loadException.getMessage());
+            }
         }
 
-        log.info("Refreshing g_pgq_edges projection: expected={}, actual={}", state.expectedCount(), state.actualCount());
+        if (duckPgqProperties.isPreferLatest()) {
+            try (Statement installStatement = connection.createStatement()) {
+                installStatement.execute("SET custom_extension_repository = '" + duckPgqProperties.getRepositoryUrl() + "'");
+                installStatement.execute(duckPgqProperties.isForceInstall() ? "FORCE INSTALL duckpgq" : "INSTALL duckpgq");
+            }
+            try (Statement loadStatement = connection.createStatement()) {
+                loadStatement.execute("LOAD duckpgq");
+                log.info("duckpgq extension installed and loaded successfully from latest repository");
+                return;
+            } catch (SQLException latestLoadException) {
+                log.warn("Latest duckpgq install/load failed, falling back to community repository: {}", latestLoadException.getMessage());
+            }
+        }
+
+        try (Statement installStatement = connection.createStatement()) {
+            installStatement.execute("INSTALL duckpgq FROM community");
+        }
+        try (Statement loadStatement = connection.createStatement()) {
+            loadStatement.execute("LOAD duckpgq");
+            log.info("duckpgq extension installed and loaded successfully from community repository");
+        }
+    }
+
+    private void recreateProjectionTables(Connection connection) throws SQLException {
+        createProjectionTableIfMissing(connection, ALL_PROJECTION_TABLE);
+        createProjectionTableIfMissing(connection, KNOWS_PROJECTION_TABLE);
+        createProjectionTableIfMissing(connection, RELATIVE_PROJECTION_TABLE);
+        createProjectionTableIfMissing(connection, SAME_CITY_PROJECTION_TABLE);
+
         try (Statement statement = connection.createStatement()) {
             statement.execute("DELETE FROM g_pgq_edges");
-            statement.execute(
-                """
-                INSERT INTO g_pgq_edges (
-                    pgq_edge_id,
-                    edge_id,
-                    from_node_id,
-                    to_node_id,
-                    traversal_from_node_id,
-                    traversal_to_node_id,
-                    edge_type,
-                    directed,
-                    tx_count,
-                    tx_sum,
-                    attrs_json,
-                    created_at,
-                    updated_at
-                )
-                SELECT
-                    edge_id || ':fwd',
-                    edge_id,
-                    from_node_id,
-                    to_node_id,
-                    from_node_id,
-                    to_node_id,
-                    edge_type,
-                    directed,
-                    tx_count,
-                    tx_sum,
-                    attrs_json,
-                    created_at,
-                    updated_at
-                FROM g_edges
-                """
-            );
-            statement.execute(
-                """
-                INSERT INTO g_pgq_edges (
-                    pgq_edge_id,
-                    edge_id,
-                    from_node_id,
-                    to_node_id,
-                    traversal_from_node_id,
-                    traversal_to_node_id,
-                    edge_type,
-                    directed,
-                    tx_count,
-                    tx_sum,
-                    attrs_json,
-                    created_at,
-                    updated_at
-                )
-                SELECT
-                    edge_id || ':rev',
-                    edge_id,
-                    from_node_id,
-                    to_node_id,
-                    to_node_id,
-                    from_node_id,
-                    edge_type,
-                    directed,
-                    tx_count,
-                    tx_sum,
-                    attrs_json,
-                    created_at,
-                    updated_at
-                FROM g_edges
-                WHERE directed = FALSE
-                """
-            );
+            statement.execute("DELETE FROM " + KNOWS_PROJECTION_TABLE);
+            statement.execute("DELETE FROM " + RELATIVE_PROJECTION_TABLE);
+            statement.execute("DELETE FROM " + SAME_CITY_PROJECTION_TABLE);
+
+            insertProjection(statement, ALL_PROJECTION_TABLE, null);
+            insertProjection(statement, KNOWS_PROJECTION_TABLE, "PERSON_KNOWS_PERSON");
+            insertProjection(statement, RELATIVE_PROJECTION_TABLE, "PERSON_RELATIVE_PERSON");
+            insertProjection(statement, SAME_CITY_PROJECTION_TABLE, "PERSON_SAME_CITY_PERSON");
         }
     }
 
-    private ProjectionState projectionState(Connection connection) throws SQLException {
-        try (PreparedStatement ps = connection.prepareStatement(
+    private void createProjectionTableIfMissing(Connection connection, String tableName) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute(
+                """
+                CREATE TABLE IF NOT EXISTS %s (
+                    pgq_edge_id VARCHAR PRIMARY KEY,
+                    edge_id VARCHAR NOT NULL,
+                    from_node_id VARCHAR NOT NULL,
+                    to_node_id VARCHAR NOT NULL,
+                    traversal_from_node_id VARCHAR NOT NULL,
+                    traversal_to_node_id VARCHAR NOT NULL,
+                    edge_type VARCHAR NOT NULL,
+                    directed BOOLEAN DEFAULT TRUE,
+                    tx_count BIGINT DEFAULT 0,
+                    tx_sum DOUBLE DEFAULT 0,
+                    relation_family VARCHAR,
+                    strength_score DOUBLE DEFAULT 0,
+                    evidence_count BIGINT DEFAULT 0,
+                    attrs_json VARCHAR,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """.formatted(tableName)
+            );
+            statement.execute("ALTER TABLE " + tableName + " ADD COLUMN IF NOT EXISTS relation_family VARCHAR");
+            statement.execute("ALTER TABLE " + tableName + " ADD COLUMN IF NOT EXISTS strength_score DOUBLE DEFAULT 0");
+            statement.execute("ALTER TABLE " + tableName + " ADD COLUMN IF NOT EXISTS evidence_count BIGINT DEFAULT 0");
+        }
+    }
+
+    private void insertProjection(Statement statement, String tableName, String relationFamily) throws SQLException {
+        String relationFilter = relationFamily == null ? "" : " WHERE relation_family = '" + relationFamily + "'";
+
+        statement.execute(
             """
-            WITH expected AS (
-              SELECT
-                COALESCE(COUNT(*), 0) + COALESCE(SUM(CASE WHEN directed = FALSE THEN 1 ELSE 0 END), 0) AS expected_count,
-                COALESCE(MAX(updated_at), TIMESTAMP '1970-01-01') AS expected_updated_at
-              FROM g_edges
-            ),
-            actual AS (
-              SELECT
-                COALESCE(COUNT(*), 0) AS actual_count,
-                COALESCE(MAX(updated_at), TIMESTAMP '1970-01-01') AS actual_updated_at
-              FROM g_pgq_edges
+            INSERT INTO %s (
+                pgq_edge_id,
+                edge_id,
+                from_node_id,
+                to_node_id,
+                traversal_from_node_id,
+                traversal_to_node_id,
+                edge_type,
+                directed,
+                tx_count,
+                tx_sum,
+                relation_family,
+                strength_score,
+                evidence_count,
+                attrs_json,
+                created_at,
+                updated_at
             )
-            SELECT expected_count, actual_count, expected_updated_at, actual_updated_at
-            FROM expected
-            CROSS JOIN actual
+            SELECT
+                edge_id || ':fwd',
+                edge_id,
+                from_node_id,
+                to_node_id,
+                from_node_id,
+                to_node_id,
+                edge_type,
+                directed,
+                tx_count,
+                tx_sum,
+                relation_family,
+                strength_score,
+                evidence_count,
+                attrs_json,
+                created_at,
+                updated_at
+            FROM g_edges%s
+            """.formatted(tableName, relationFilter)
+        );
+
+        statement.execute(
             """
-        )) {
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    return new ProjectionState(0, 0, false);
-                }
+            INSERT INTO %s (
+                pgq_edge_id,
+                edge_id,
+                from_node_id,
+                to_node_id,
+                traversal_from_node_id,
+                traversal_to_node_id,
+                edge_type,
+                directed,
+                tx_count,
+                tx_sum,
+                relation_family,
+                strength_score,
+                evidence_count,
+                attrs_json,
+                created_at,
+                updated_at
+            )
+            SELECT
+                edge_id || ':rev',
+                edge_id,
+                from_node_id,
+                to_node_id,
+                to_node_id,
+                from_node_id,
+                edge_type,
+                directed,
+                tx_count,
+                tx_sum,
+                relation_family,
+                strength_score,
+                evidence_count,
+                attrs_json,
+                created_at,
+                updated_at
+            FROM g_edges
+            WHERE directed = FALSE%s
+            """.formatted(tableName, relationFamily == null ? "" : " AND relation_family = '" + relationFamily + "'")
+        );
+    }
 
-                long expectedCount = rs.getLong("expected_count");
-                long actualCount = rs.getLong("actual_count");
-                Timestamp expectedUpdatedAt = rs.getTimestamp("expected_updated_at");
-                Timestamp actualUpdatedAt = rs.getTimestamp("actual_updated_at");
+    private void ensureGraphs(Connection connection) throws SQLException {
+        ensureGraph(connection, ALL_GRAPH_NAME, ALL_PROJECTION_TABLE);
+        ensureGraph(connection, KNOWS_GRAPH_NAME, KNOWS_PROJECTION_TABLE);
+        ensureGraph(connection, RELATIVE_GRAPH_NAME, RELATIVE_PROJECTION_TABLE);
+        ensureGraph(connection, SAME_CITY_GRAPH_NAME, SAME_CITY_PROJECTION_TABLE);
+    }
 
-                boolean stale = expectedCount != actualCount
-                    || (expectedUpdatedAt != null && actualUpdatedAt != null && expectedUpdatedAt.after(actualUpdatedAt));
-                return new ProjectionState(expectedCount, actualCount, stale);
+    private void ensureGraph(Connection connection, String graphName, String tableName) throws SQLException {
+        try (Statement dropStatement = connection.createStatement()) {
+            try {
+                dropStatement.execute("DROP PROPERTY GRAPH " + graphName);
+            } catch (SQLException ex) {
+                log.debug("Property graph {} was not dropped before recreation: {}", graphName, ex.getMessage());
             }
         }
-    }
 
-    private boolean tryLoadDuckPgq(Connection connection) {
-        try (Statement statement = connection.createStatement()) {
-            statement.execute("LOAD duckpgq");
-            return true;
-        } catch (SQLException ex) {
-            log.debug("LOAD duckpgq on active connection failed: {}", ex.getMessage());
-            return false;
-        }
-    }
-
-    private boolean isExtensionLoaded(Connection connection) throws SQLException {
-        try (PreparedStatement ps = connection.prepareStatement(
-            """
-            SELECT loaded
-            FROM duckdb_extensions()
-            WHERE extension_name = 'duckpgq'
-            LIMIT 1
-            """
-        )) {
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() && rs.getBoolean(1);
-            }
-        }
-    }
-
-    private void ensureDuckPgqGraph(Connection connection) throws SQLException {
-        try (Statement statement = connection.createStatement()) {
-            statement.execute(
-                String.format(
-                    """
-                    CREATE PROPERTY GRAPH IF NOT EXISTS %s (
-                      VERTEX TABLE g_nodes KEY (node_id),
-                      EDGE TABLE g_pgq_edges KEY (pgq_edge_id)
-                        SOURCE KEY (traversal_from_node_id) REFERENCES g_nodes (node_id)
-                        DESTINATION KEY (traversal_to_node_id) REFERENCES g_nodes (node_id)
-                    )
-                    """,
-                    DUCKPGQ_GRAPH_NAME
-                )
+        try (Statement createStatement = connection.createStatement()) {
+            createStatement.execute(
+                """
+                CREATE PROPERTY GRAPH %s
+                  VERTEX TABLES (
+                    g_nodes LABEL %s
+                  )
+                  EDGE TABLES (
+                    %s
+                    SOURCE KEY (traversal_from_node_id) REFERENCES g_nodes (node_id)
+                    DESTINATION KEY (traversal_to_node_id) REFERENCES g_nodes (node_id)
+                    LABEL %s
+                  )
+                """.formatted(graphName, VERTEX_LABEL, tableName, EDGE_LABEL)
             );
         }
+    }
+
+    private String graphName(GraphRelationFamily relationFamily) {
+        return switch (relationFamily) {
+            case PERSON_KNOWS_PERSON -> KNOWS_GRAPH_NAME;
+            case PERSON_RELATIVE_PERSON -> RELATIVE_GRAPH_NAME;
+            case PERSON_SAME_CITY_PERSON -> SAME_CITY_GRAPH_NAME;
+            case ALL_RELATIONS -> ALL_GRAPH_NAME;
+        };
+    }
+
+    private String projectionTable(GraphRelationFamily relationFamily) {
+        return switch (relationFamily) {
+            case PERSON_KNOWS_PERSON -> KNOWS_PROJECTION_TABLE;
+            case PERSON_RELATIVE_PERSON -> RELATIVE_PROJECTION_TABLE;
+            case PERSON_SAME_CITY_PERSON -> SAME_CITY_PROJECTION_TABLE;
+            case ALL_RELATIONS -> ALL_PROJECTION_TABLE;
+        };
     }
 
     private String shortestPattern(Direction direction) {
         return switch (direction) {
-            case OUTBOUND -> "-[e]->";
-            case INBOUND -> "<-[e]-";
-            case BOTH -> "-[e]-";
+            case OUTBOUND -> "-[e:%s]->".formatted(EDGE_LABEL);
+            case INBOUND -> "<-[e:%s]-".formatted(EDGE_LABEL);
+            case BOTH -> "-[e:%s]-".formatted(EDGE_LABEL);
         };
-    }
-
-    private void appendEdgeTypeFilter(StringBuilder sql,
-                                      List<Object> args,
-                                      List<String> edgeTypes,
-                                      String columnName) {
-        List<String> normalized = normalizeEdgeTypes(edgeTypes);
-        if (normalized.isEmpty()) {
-            return;
-        }
-
-        sql.append(" AND ").append(columnName).append(" IN (")
-            .append(placeholders(normalized.size()))
-            .append(")");
-        args.addAll(normalized);
-    }
-
-    private void bindParameters(PreparedStatement ps, List<Object> args) throws SQLException {
-        for (int i = 0; i < args.size(); i++) {
-            ps.setObject(i + 1, args.get(i));
-        }
-    }
-
-    private String placeholders(int count) {
-        return String.join(",", Collections.nCopies(count, "?"));
-    }
-
-    private List<String> normalizeEdgeTypes(List<String> edgeTypes) {
-        if (edgeTypes == null || edgeTypes.isEmpty()) {
-            return List.of();
-        }
-
-        return edgeTypes.stream()
-            .filter(value -> value != null && !value.isBlank())
-            .map(String::trim)
-            .toList();
     }
 
     private int asInt(Object value) {
@@ -451,37 +464,36 @@ public class DuckPgqGraphQueryRepository {
         return Integer.parseInt(value.toString());
     }
 
-    private List<String> parseTextList(Object value) {
+    private List<Long> parseLongList(Object value) {
         if (value == null) {
             return List.of();
         }
-
         if (value instanceof Array sqlArray) {
             try {
                 Object rawArray = sqlArray.getArray();
                 if (rawArray instanceof Object[] array) {
-                    return Arrays.stream(array)
-                        .map(String::valueOf)
-                        .toList();
+                    List<Long> result = new ArrayList<>(array.length);
+                    for (Object item : array) {
+                        result.add(Long.parseLong(String.valueOf(item)));
+                    }
+                    return result;
                 }
             } catch (SQLException ex) {
-                log.debug("Failed to parse SQL array: {}", ex.getMessage());
+                log.debug("Failed to parse SQL array as longs: {}", ex.getMessage());
             }
         }
-
         if (value instanceof List<?> list) {
-            return list.stream().map(String::valueOf).toList();
+            List<Long> result = new ArrayList<>(list.size());
+            for (Object item : list) {
+                result.add(Long.parseLong(String.valueOf(item)));
+            }
+            return result;
         }
 
         String raw = value.toString().trim();
-        if (raw.isBlank()) {
-            return List.of();
-        }
-
         if (raw.startsWith("[") && raw.endsWith("]")) {
             raw = raw.substring(1, raw.length() - 1).trim();
         }
-
         if (raw.isBlank()) {
             return List.of();
         }
@@ -490,15 +502,46 @@ public class DuckPgqGraphQueryRepository {
             .map(String::trim)
             .map(this::stripQuotes)
             .filter(token -> !token.isBlank())
+            .map(Long::parseLong)
+            .toList();
+    }
+
+    private List<String> parseTextList(Object value) {
+        if (value == null) {
+            return List.of();
+        }
+        if (value instanceof Array sqlArray) {
+            try {
+                Object rawArray = sqlArray.getArray();
+                if (rawArray instanceof Object[] array) {
+                    return Arrays.stream(array).map(String::valueOf).toList();
+                }
+            } catch (SQLException ex) {
+                log.debug("Failed to parse SQL array: {}", ex.getMessage());
+            }
+        }
+        if (value instanceof List<?> list) {
+            return list.stream().map(String::valueOf).toList();
+        }
+
+        String raw = value.toString().trim();
+        if (raw.startsWith("[") && raw.endsWith("]")) {
+            raw = raw.substring(1, raw.length() - 1).trim();
+        }
+        if (raw.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(raw.split("\\s*,\\s*"))
+            .map(String::trim)
+            .map(this::stripQuotes)
+            .filter(token -> !token.isBlank())
             .toList();
     }
 
     private String stripQuotes(String value) {
-        if (value.length() >= 2) {
-            if ((value.startsWith("\"") && value.endsWith("\""))
-                || (value.startsWith("'") && value.endsWith("'"))) {
-                return value.substring(1, value.length() - 1);
-            }
+        if (value.length() >= 2 && ((value.startsWith("\"") && value.endsWith("\""))
+            || (value.startsWith("'") && value.endsWith("'")))) {
+            return value.substring(1, value.length() - 1);
         }
         return value;
     }
@@ -512,27 +555,77 @@ public class DuckPgqGraphQueryRepository {
             rs.getBoolean("directed"),
             rs.getLong("tx_count"),
             rs.getDouble("tx_sum"),
+            rs.getString("relation_family"),
+            rs.getDouble("strength_score"),
+            rs.getLong("evidence_count"),
             readJsonMap(rs.getString("attrs_json"))
         );
+    }
+
+    private List<String> resolveNodeIdsByRowId(Connection connection, List<Long> rowIds) throws SQLException {
+        if (rowIds.isEmpty()) {
+            return List.of();
+        }
+
+        Map<Long, String> idsByRowId = new LinkedHashMap<>();
+        String sql = "SELECT rowid, node_id FROM g_nodes WHERE rowid IN (" + longInList(rowIds) + ")";
+        try (Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            while (rs.next()) {
+                idsByRowId.put(rs.getLong("rowid"), rs.getString("node_id"));
+            }
+        }
+
+        List<String> ordered = new ArrayList<>(rowIds.size());
+        for (Long rowId : rowIds) {
+            String nodeId = idsByRowId.get(rowId);
+            if (nodeId != null) {
+                ordered.add(nodeId);
+            }
+        }
+        return ordered;
+    }
+
+    private List<String> resolveEdgeIdsByRowId(Connection connection, String tableName, List<Long> rowIds) throws SQLException {
+        if (rowIds.isEmpty()) {
+            return List.of();
+        }
+
+        Map<Long, String> idsByRowId = new LinkedHashMap<>();
+        String sql = "SELECT rowid, edge_id FROM " + tableName + " WHERE rowid IN (" + longInList(rowIds) + ")";
+        try (Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            while (rs.next()) {
+                idsByRowId.put(rs.getLong("rowid"), rs.getString("edge_id"));
+            }
+        }
+
+        List<String> ordered = new ArrayList<>(rowIds.size());
+        for (Long rowId : rowIds) {
+            String edgeId = idsByRowId.get(rowId);
+            if (edgeId != null) {
+                ordered.add(edgeId);
+            }
+        }
+        return ordered;
+    }
+
+    private String longInList(List<Long> values) {
+        return values.stream()
+            .map(String::valueOf)
+            .collect(Collectors.joining(","));
     }
 
     private Map<String, Object> readJsonMap(String rawJson) {
         if (rawJson == null || rawJson.isBlank()) {
             return Map.of();
         }
-
         try {
-            return objectMapper.readValue(rawJson, new TypeReference<>() {
-            });
+            return objectMapper.readValue(rawJson, new TypeReference<>() { });
         } catch (Exception ex) {
             log.debug("Failed to parse attrs_json '{}': {}", rawJson, ex.getMessage());
             return Map.of();
         }
     }
 
-    private record ExpandQuery(String sql, List<Object> args) {
-    }
-
-    private record ProjectionState(long expectedCount, long actualCount, boolean stale) {
-    }
 }
