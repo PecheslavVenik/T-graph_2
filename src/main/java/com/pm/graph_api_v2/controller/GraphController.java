@@ -1,14 +1,18 @@
 package com.pm.graph_api_v2.controller;
 
+import com.pm.graph_api_v2.dto.Direction;
 import com.pm.graph_api_v2.dto.GraphDictionaryResponse;
 import com.pm.graph_api_v2.dto.GraphExpandRequest;
 import com.pm.graph_api_v2.dto.GraphExpandResponse;
 import com.pm.graph_api_v2.dto.GraphExportFormat;
 import com.pm.graph_api_v2.dto.GraphExportRequest;
+import com.pm.graph_api_v2.dto.GraphNodeSummaryResponse;
+import com.pm.graph_api_v2.dto.GraphRelationFamily;
 import com.pm.graph_api_v2.dto.ShortestPathRequest;
 import com.pm.graph_api_v2.dto.ShortestPathResponse;
 import com.pm.graph_api_v2.service.InvestigationService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
@@ -44,6 +48,13 @@ public class GraphController {
     @GetMapping("/dictionary")
     public GraphDictionaryResponse dictionary() {
         return investigationService.dictionary();
+    }
+
+    @GetMapping("/node-summary")
+    public GraphNodeSummaryResponse nodeSummary(@RequestParam @NotBlank String nodeId,
+                                                @RequestParam(required = false) GraphRelationFamily relationFamily,
+                                                @RequestParam(defaultValue = "BOTH") Direction direction) {
+        return investigationService.nodeSummary(nodeId, relationFamily, direction);
     }
 
     @PostMapping("/export")

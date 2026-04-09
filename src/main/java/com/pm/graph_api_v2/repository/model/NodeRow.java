@@ -4,6 +4,8 @@ import java.util.Map;
 
 public record NodeRow(
     String nodeId,
+    String nodeType,
+    String displayName,
     String partyRk,
     String personId,
     String phoneNo,
@@ -12,8 +14,10 @@ public record NodeRow(
     boolean vip,
     String employer,
     String city,
+    String sourceSystem,
     double pagerankScore,
     double hubScore,
+    Map<String, String> identifiers,
     Map<String, Object> attrs
 ) {
 }

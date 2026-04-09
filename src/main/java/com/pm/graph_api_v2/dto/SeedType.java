@@ -4,5 +4,11 @@ public enum SeedType {
     PARTY_RK,
     PERSON_ID,
     PHONE_NO,
+    ACCOUNT_NO,
+    CARD_MASK,
+    TAX_ID,
+    DEVICE_ID,
+    IP,
+    EMAIL,
     NODE_ID
 }

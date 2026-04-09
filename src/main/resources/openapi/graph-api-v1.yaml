@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Investigation Graph API
   version: 1.0.0
-  description: DuckPGQ-only investigation graph API with smart 1-hop expansion and bounded export.
+  description: Investigation graph API with switchable graph-query backend, smart 1-hop expansion and bounded export.
 servers:
   - url: /api/v1
 paths:
@@ -54,6 +54,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GraphDictionaryResponse'
+  /graph/node-summary:
+    get:
+      summary: Get node click summary before graph expansion
+      parameters:
+        - name: nodeId
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: relationFamily
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/GraphRelationFamily'
+        - name: direction
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Direction'
+            default: BOTH
+      responses:
+        '200':
+          description: Node summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphNodeSummaryResponse'
+        '404':
+          description: Node not found
   /graph/export:
     post:
       summary: Export rendered graph as JSON, CSV or NDJSON
@@ -180,11 +210,41 @@ components:
             $ref: '#/components/schemas/GraphEdge'
         meta:
           $ref: '#/components/schemas/GraphMeta'
+    GraphNodeSummaryResponse:
+      type: object
+      required: [node, summary, relationFamilies, edgeTypes, neighborNodeTypes, expandPreview]
+      properties:
+        node:
+          $ref: '#/components/schemas/GraphNode'
+        summary:
+          $ref: '#/components/schemas/GraphNodeSummary'
+        relationFamilies:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphFacetCount'
+        edgeTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphFacetCount'
+        neighborNodeTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphFacetCount'
+        expandPreview:
+          $ref: '#/components/schemas/GraphExpandPreview'
     GraphDictionaryResponse:
       type: object
-      required: [edgeTypes, nodeStatuses, styleHints]
+      required: [edgeTypes, relationFamilies, nodeTypes, nodeStatuses, styleHints]
       properties:
         edgeTypes:
+          type: array
+          items:
+            type: string
+        relationFamilies:
+          type: array
+          items:
+            type: string
+        nodeTypes:
           type: array
           items:
             type: string
@@ -196,6 +256,42 @@ components:
           type: object
           additionalProperties:
             type: string
+    GraphNodeSummary:
+      type: object
+      required: [requestedDirection, relationFamily, adjacentEdgeCount, uniqueNeighborCount, outboundEdgeCount, inboundEdgeCount]
+      properties:
+        requestedDirection:
+          $ref: '#/components/schemas/Direction'
+        relationFamily:
+          type: string
+        adjacentEdgeCount:
+          type: integer
+        uniqueNeighborCount:
+          type: integer
+        outboundEdgeCount:
+          type: integer
+        inboundEdgeCount:
+          type: integer
+    GraphFacetCount:
+      type: object
+      required: [key, count]
+      properties:
+        key:
+          type: string
+        count:
+          type: integer
+    GraphExpandPreview:
+      type: object
+      required: [defaultMaxNeighborsPerSeed, defaultMaxNodes, defaultMaxEdges, wouldTruncateByNeighborBudget]
+      properties:
+        defaultMaxNeighborsPerSeed:
+          type: integer
+        defaultMaxNodes:
+          type: integer
+        defaultMaxEdges:
+          type: integer
+        wouldTruncateByNeighborBudget:
+          type: boolean
     SeedRef:
       type: object
       required: [type, value]
@@ -207,10 +303,10 @@ components:
           minLength: 1
     SeedType:
       type: string
-      enum: [PARTY_RK, PERSON_ID, PHONE_NO, NODE_ID]
+      enum: [PARTY_RK, PERSON_ID, PHONE_NO, ACCOUNT_NO, CARD_MASK, TAX_ID, DEVICE_ID, IP, EMAIL, NODE_ID]
     GraphRelationFamily:
       type: string
-      enum: [PERSON_KNOWS_PERSON, PERSON_RELATIVE_PERSON, PERSON_SAME_CITY_PERSON, ALL_RELATIONS]
+      enum: [PERSON_KNOWS_PERSON, PERSON_RELATIVE_PERSON, PERSON_SAME_CITY_PERSON, ACCOUNT_FLOW, CUSTOMER_OWNERSHIP, SHARED_INFRASTRUCTURE, CORPORATE_CONTROL, ALL_RELATIONS]
     Direction:
       type: string
       enum: [OUTBOUND, INBOUND, BOTH]
@@ -221,6 +317,8 @@ components:
         nodeId:
           type: string
           minLength: 1
+        nodeType:
+          type: string
         displayName:
           type: string
           minLength: 1
@@ -251,10 +349,20 @@ components:
         type:
           type: string
           minLength: 1
+        relationFamily:
+          type: string
         directed:
           type: boolean
         weight:
           type: number
+        sourceSystem:
+          type: string
+        firstSeenAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
         attributes:
           type: object
           additionalProperties: true
@@ -268,7 +376,7 @@ components:
           type: integer
         source:
           type: string
-          enum: [DUCKPGQ]
+          enum: [DUCKPGQ, NEO4J]
         relationFamily:
           $ref: '#/components/schemas/GraphRelationFamily'
         rankingStrategy:

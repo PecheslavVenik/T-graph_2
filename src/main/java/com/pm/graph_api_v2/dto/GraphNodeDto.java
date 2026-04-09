@@ -7,6 +7,7 @@ import java.util.Set;
 
 public record GraphNodeDto(
     @NotBlank String nodeId,
+    String nodeType,
     @NotBlank String displayName,
     Map<String, String> identifiers,
     Set<String> statuses,

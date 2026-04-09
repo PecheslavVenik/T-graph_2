@@ -6,6 +6,12 @@ GET {{baseUrl}}/actuator/health
 ### Dictionary
 GET {{baseUrl}}/api/v1/graph/dictionary
 
+### Node summary before expand
+GET {{baseUrl}}/api/v1/graph/node-summary?nodeId=N_PARTY_1001
+
+### Node summary for filtered expand preview
+GET {{baseUrl}}/api/v1/graph/node-summary?nodeId=N_PARTY_1001&relationFamily=CUSTOMER_OWNERSHIP&direction=OUTBOUND
+
 ### Expand (1-hop)
 POST {{baseUrl}}/api/v1/graph/expand
 Content-Type: application/json
@@ -32,6 +38,34 @@ Content-Type: application/json
   "relationFamily": "PERSON_KNOWS_PERSON",
   "direction": "OUTBOUND",
   "maxDepth": 4
+}
+
+### Expand by account seed
+POST {{baseUrl}}/api/v1/graph/expand
+Content-Type: application/json
+
+{
+  "seeds": [
+    {"type": "ACCOUNT_NO", "value": "40817810000000002001"}
+  ],
+  "relationFamily": "ACCOUNT_FLOW",
+  "direction": "OUTBOUND",
+  "maxNeighborsPerSeed": 10,
+  "maxNodes": 100,
+  "maxEdges": 100,
+  "includeAttributes": true
+}
+
+### Shortest path to company by tax id
+POST {{baseUrl}}/api/v1/graph/shortest-path
+Content-Type: application/json
+
+{
+  "source": {"type": "PARTY_RK", "value": "PARTY_1001"},
+  "target": {"type": "TAX_ID", "value": "7701234567"},
+  "relationFamily": "CORPORATE_CONTROL",
+  "direction": "OUTBOUND",
+  "maxDepth": 2
 }
 
 ### Export JSON

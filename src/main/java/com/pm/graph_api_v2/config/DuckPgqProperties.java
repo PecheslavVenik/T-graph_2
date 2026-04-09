@@ -7,6 +7,7 @@ public class DuckPgqProperties {
 
     private boolean enabled = true;
     private boolean autoLoad = true;
+    private boolean syncGraphStateOnStartup = true;
     private boolean preferLatest = false;
     private boolean forceInstall = false;
     private String repositoryUrl = "http://duckpgq.s3.eu-north-1.amazonaws.com";
@@ -29,6 +30,14 @@ public class DuckPgqProperties {
 
     public boolean isPreferLatest() {
         return preferLatest;
+    }
+
+    public boolean isSyncGraphStateOnStartup() {
+        return syncGraphStateOnStartup;
+    }
+
+    public void setSyncGraphStateOnStartup(boolean syncGraphStateOnStartup) {
+        this.syncGraphStateOnStartup = syncGraphStateOnStartup;
     }
 
     public void setPreferLatest(boolean preferLatest) {

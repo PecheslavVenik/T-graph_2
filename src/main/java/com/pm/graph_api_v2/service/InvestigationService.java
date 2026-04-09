@@ -6,22 +6,27 @@ import com.pm.graph_api_v2.dto.GraphDictionaryResponse;
 import com.pm.graph_api_v2.dto.GraphEdgeDto;
 import com.pm.graph_api_v2.dto.GraphExpandRequest;
 import com.pm.graph_api_v2.dto.GraphExpandResponse;
+import com.pm.graph_api_v2.dto.GraphExpandPreviewDto;
+import com.pm.graph_api_v2.dto.GraphFacetCountDto;
 import com.pm.graph_api_v2.dto.GraphExportFormat;
 import com.pm.graph_api_v2.dto.GraphExportRequest;
 import com.pm.graph_api_v2.dto.GraphMetaDto;
 import com.pm.graph_api_v2.dto.GraphNodeDto;
 import com.pm.graph_api_v2.dto.GraphRelationFamily;
-import com.pm.graph_api_v2.dto.GraphSource;
+import com.pm.graph_api_v2.dto.GraphNodeSummaryDto;
+import com.pm.graph_api_v2.dto.GraphNodeSummaryResponse;
 import com.pm.graph_api_v2.dto.PathDto;
 import com.pm.graph_api_v2.dto.ShortestPathRequest;
 import com.pm.graph_api_v2.dto.ShortestPathResponse;
 import com.pm.graph_api_v2.exception.ApiBadRequestException;
 import com.pm.graph_api_v2.exception.ApiNotFoundException;
 import com.pm.graph_api_v2.metrics.GraphMetrics;
-import com.pm.graph_api_v2.repository.DuckPgqGraphQueryRepository;
 import com.pm.graph_api_v2.repository.GraphRepository;
+import com.pm.graph_api_v2.repository.GraphQueryBackend;
 import com.pm.graph_api_v2.repository.model.EdgeRow;
+import com.pm.graph_api_v2.repository.model.FacetCountRow;
 import com.pm.graph_api_v2.repository.model.NodeRow;
+import com.pm.graph_api_v2.repository.model.NodeNeighborhoodSummaryRow;
 import com.pm.graph_api_v2.repository.model.PathRow;
 import io.micrometer.core.instrument.Timer;
 import org.springframework.http.MediaType;
@@ -41,33 +46,27 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class InvestigationService {
 
-    private static final Set<String> NODE_STATUSES = Set.of("BLACKLIST", "VIP", "EMPLOYED");
-    private static final Map<String, String> STYLE_HINTS = Map.of(
-        "BLACKLIST", "node-color:#111111",
-        "VIP", "node-color:#f39c12",
-        "EMPLOYED", "node-border:#1f7a8c",
-        "KNOWS", "edge-style:bold-solid",
-        "RELATIVE", "edge-style:double-solid",
-        "SAME_CITY", "edge-style:thin-dashed"
-    );
-    private static final String RANKING_STRATEGY = "INVESTIGATION_DEFAULT";
+    private static final String RANKING_STRATEGY = "GENERIC_ONE_HOP_RANKING";
 
     private final GraphRepository graphRepository;
-    private final DuckPgqGraphQueryRepository duckPgqGraphQueryRepository;
+    private final GraphQueryBackend graphQueryBackend;
     private final GraphDtoMapper graphDtoMapper;
+    private final GraphDictionaryFactory graphDictionaryFactory;
     private final GraphProperties graphProperties;
     private final GraphMetrics graphMetrics;
     private final ObjectMapper objectMapper;
 
     public InvestigationService(GraphRepository graphRepository,
-                                DuckPgqGraphQueryRepository duckPgqGraphQueryRepository,
+                                GraphQueryBackend graphQueryBackend,
                                 GraphDtoMapper graphDtoMapper,
+                                GraphDictionaryFactory graphDictionaryFactory,
                                 GraphProperties graphProperties,
                                 GraphMetrics graphMetrics,
                                 ObjectMapper objectMapper) {
         this.graphRepository = graphRepository;
-        this.duckPgqGraphQueryRepository = duckPgqGraphQueryRepository;
+        this.graphQueryBackend = graphQueryBackend;
         this.graphDtoMapper = graphDtoMapper;
+        this.graphDictionaryFactory = graphDictionaryFactory;
         this.graphProperties = graphProperties;
         this.graphMetrics = graphMetrics;
         this.objectMapper = objectMapper;
@@ -92,7 +91,7 @@ public class InvestigationService {
                 throw new ApiBadRequestException("maxNodes is lower than number of resolved seed nodes");
             }
 
-            List<EdgeRow> candidateEdges = duckPgqGraphQueryRepository.findExpandEdges(
+            List<EdgeRow> candidateEdges = graphQueryBackend.findExpandEdges(
                 seedNodeIds,
                 relationFamily,
                 request.direction(),
@@ -122,7 +121,7 @@ public class InvestigationService {
             GraphMetaDto meta = new GraphMetaDto(
                 perSeedLimit.truncated() || selection.truncated(),
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
-                GraphSource.DUCKPGQ,
+                graphQueryBackend.source(),
                 relationFamily.name(),
                 RANKING_STRATEGY,
                 candidateEdges.size(),
@@ -155,11 +154,11 @@ public class InvestigationService {
                 .orElseThrow(() -> new ApiNotFoundException("Target node was not found"));
             int maxDepth = request.maxDepth() == null ? graphProperties.getDefaultMaxDepth() : request.maxDepth();
 
-            PathRow pathRow = duckPgqGraphQueryRepository.findShortestPath(sourceNodeId, targetNodeId, relationFamily, request.direction(), maxDepth)
+            PathRow pathRow = graphQueryBackend.findShortestPath(sourceNodeId, targetNodeId, relationFamily, request.direction(), maxDepth)
                 .orElseThrow(() -> new ApiNotFoundException("No path between source and target in current graph"));
 
-            List<NodeRow> nodeRows = graphRepository.findNodesByIds(pathRow.nodeIds());
-            List<EdgeRow> edgeRows = graphRepository.findEdgesByIds(pathRow.edgeIds());
+            List<NodeRow> nodeRows = graphRepository.findNodesByIdsInOrder(pathRow.nodeIds());
+            List<EdgeRow> edgeRows = graphRepository.findEdgesByIdsInOrder(pathRow.edgeIds());
 
             List<GraphNodeDto> nodes = nodeRows.stream()
                 .map(row -> graphDtoMapper.toNodeDto(row, true))
@@ -174,7 +173,7 @@ public class InvestigationService {
             GraphMetaDto meta = new GraphMetaDto(
                 false,
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
-                GraphSource.DUCKPGQ,
+                graphQueryBackend.source(),
                 relationFamily.name(),
                 RANKING_STRATEGY,
                 pathRow.edgeIds().size(),
@@ -195,10 +194,44 @@ public class InvestigationService {
     }
 
     public GraphDictionaryResponse dictionary() {
-        return new GraphDictionaryResponse(
+        return graphDictionaryFactory.create(
             graphRepository.findDistinctEdgeTypes(),
-            NODE_STATUSES.stream().sorted().toList(),
-            STYLE_HINTS
+            graphRepository.findDistinctRelationFamilies(),
+            graphRepository.findDistinctNodeTypes(),
+            graphRepository.findPresentNodeStatuses()
+        );
+    }
+
+    public GraphNodeSummaryResponse nodeSummary(String nodeId,
+                                                GraphRelationFamily relationFamily,
+                                                Direction direction) {
+        GraphRelationFamily resolvedRelationFamily = relationFamily == null
+            ? GraphRelationFamily.ALL_RELATIONS
+            : relationFamily;
+
+        NodeRow nodeRow = graphRepository.findNodeById(nodeId)
+            .orElseThrow(() -> new ApiNotFoundException("Node was not found"));
+        NodeNeighborhoodSummaryRow summaryRow = graphRepository.summarizeNeighborhood(nodeId, resolvedRelationFamily, direction);
+
+        return new GraphNodeSummaryResponse(
+            graphDtoMapper.toNodeDto(nodeRow, true),
+            new GraphNodeSummaryDto(
+                direction,
+                resolvedRelationFamily.name(),
+                summaryRow.adjacentEdgeCount(),
+                summaryRow.uniqueNeighborCount(),
+                summaryRow.outboundEdgeCount(),
+                summaryRow.inboundEdgeCount()
+            ),
+            toFacetDtos(graphRepository.countRelationFamiliesAroundNode(nodeId, resolvedRelationFamily, direction)),
+            toFacetDtos(graphRepository.countEdgeTypesAroundNode(nodeId, resolvedRelationFamily, direction)),
+            toFacetDtos(graphRepository.countNeighborNodeTypesAroundNode(nodeId, resolvedRelationFamily, direction)),
+            new GraphExpandPreviewDto(
+                graphProperties.getDefaultMaxNeighborsPerSeed(),
+                graphProperties.getDefaultMaxNodes(),
+                graphProperties.getDefaultMaxEdges(),
+                summaryRow.adjacentEdgeCount() > graphProperties.getDefaultMaxNeighborsPerSeed()
+            )
         );
     }
 
@@ -221,28 +254,31 @@ public class InvestigationService {
 
     private ExportedGraph exportCsv(GraphExportRequest request) {
         StringBuilder sb = new StringBuilder();
-        sb.append("section,node_id,display_name,party_rk,person_id,phone_no,statuses,attributes\n");
+        sb.append("section,node_id,node_type,display_name,identifiers,statuses,attributes\n");
         for (GraphNodeDto node : request.nodes()) {
             sb.append("node")
                 .append(',').append(csv(node.nodeId()))
+                .append(',').append(csv(node.nodeType()))
                 .append(',').append(csv(node.displayName()))
-                .append(',').append(csv(node.identifiers() == null ? null : node.identifiers().get("party_rk")))
-                .append(',').append(csv(node.identifiers() == null ? null : node.identifiers().get("person_id")))
-                .append(',').append(csv(node.identifiers() == null ? null : node.identifiers().get("phone_no")))
+                .append(',').append(csv(writeJson(node.identifiers())))
                 .append(',').append(csv(join(node.statuses() == null ? List.of() : node.statuses().stream().toList())))
                 .append(',').append(csv(writeJson(node.attributes())))
                 .append('\n');
         }
 
-        sb.append("section,edge_id,from_node_id,to_node_id,type,directed,weight,attributes\n");
+        sb.append("section,edge_id,from_node_id,to_node_id,type,relation_family,directed,weight,source_system,first_seen_at,last_seen_at,attributes\n");
         for (GraphEdgeDto edge : request.edges()) {
             sb.append("edge")
                 .append(',').append(csv(edge.edgeId()))
                 .append(',').append(csv(edge.fromNodeId()))
                 .append(',').append(csv(edge.toNodeId()))
                 .append(',').append(csv(edge.type()))
+                .append(',').append(csv(edge.relationFamily()))
                 .append(',').append(csv(Boolean.toString(edge.directed())))
                 .append(',').append(csv(edge.weight() == null ? null : edge.weight().toString()))
+                .append(',').append(csv(edge.sourceSystem()))
+                .append(',').append(csv(edge.firstSeenAt() == null ? null : edge.firstSeenAt().toString()))
+                .append(',').append(csv(edge.lastSeenAt() == null ? null : edge.lastSeenAt().toString()))
                 .append(',').append(csv(writeJson(edge.attributes())))
                 .append('\n');
         }
@@ -416,8 +452,12 @@ public class InvestigationService {
             baseEdge.fromNodeId(),
             baseEdge.toNodeId(),
             baseEdge.type(),
+            baseEdge.relationFamily(),
             baseEdge.directed(),
             baseEdge.weight(),
+            baseEdge.sourceSystem(),
+            baseEdge.firstSeenAt(),
+            baseEdge.lastSeenAt(),
             attributes
         );
     }
@@ -471,7 +511,13 @@ public class InvestigationService {
     }
 
     private GraphRelationFamily resolveRelationFamily(GraphRelationFamily relationFamily) {
-        return relationFamily == null ? GraphRelationFamily.PERSON_KNOWS_PERSON : relationFamily;
+        return relationFamily == null ? graphProperties.getDefaultRelationFamily() : relationFamily;
+    }
+
+    private List<GraphFacetCountDto> toFacetDtos(List<FacetCountRow> rows) {
+        return rows.stream()
+            .map(row -> new GraphFacetCountDto(row.key(), row.count()))
+            .toList();
     }
 
     private int orDefault(Integer value, int fallback) {

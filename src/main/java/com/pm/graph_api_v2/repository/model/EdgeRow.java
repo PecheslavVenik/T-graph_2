@@ -1,5 +1,6 @@
 package com.pm.graph_api_v2.repository.model;
 
+import java.time.Instant;
 import java.util.Map;
 
 public record EdgeRow(
@@ -13,6 +14,9 @@ public record EdgeRow(
     String relationFamily,
     double strengthScore,
     long evidenceCount,
+    String sourceSystem,
+    Instant firstSeenAt,
+    Instant lastSeenAt,
     Map<String, Object> attrs
 ) {
 }

@@ -2,6 +2,7 @@ package com.pm.graph_api_v2.config;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 import com.pm.graph_api_v2.repository.DuckPgqGraphQueryRepository;
@@ -9,6 +10,7 @@ import jakarta.annotation.PostConstruct;
 
 @Component
 @DependsOn("flyway")
+@ConditionalOnProperty(name = "graph.query-backend", havingValue = "DUCKPGQ", matchIfMissing = true)
 public class DuckPgqExtensionLoader {
 
     private static final Logger log = LoggerFactory.getLogger(DuckPgqExtensionLoader.class);

@@ -12,6 +12,7 @@ services:
       SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "1"
       SPRING_DATASOURCE_ALLOW_UNSIGNED_EXTENSIONS: "true"
       SPRING_FLYWAY_ENABLED: "true"
+      GRAPH_QUERY_BACKEND: "DUCKPGQ"
       GRAPH_DUCKPGQ_ENABLED: "true"
       GRAPH_DUCKPGQ_AUTO_LOAD: "true"
       GRAPH_DUCKPGQ_PREFER_LATEST: "false"
@@ -22,5 +23,19 @@ services:
       - graph_api_data:/data/graph_api
     restart: unless-stopped
 
+  neo4j:
+    image: neo4j:5-community
+    container_name: graph-api-v2-neo4j
+    profiles: ["neo4j"]
+    environment:
+      NEO4J_AUTH: neo4j/graph-api-password
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - graph_api_neo4j_data:/data
+    restart: unless-stopped
+
 volumes:
   graph_api_data:
+  graph_api_neo4j_data:

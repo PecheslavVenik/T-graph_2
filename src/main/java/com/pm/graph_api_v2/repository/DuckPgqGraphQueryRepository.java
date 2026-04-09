@@ -2,11 +2,13 @@ package com.pm.graph_api_v2.repository;
 
 import com.pm.graph_api_v2.dto.Direction;
 import com.pm.graph_api_v2.dto.GraphRelationFamily;
+import com.pm.graph_api_v2.dto.GraphSource;
 import com.pm.graph_api_v2.config.DuckPgqProperties;
 import com.pm.graph_api_v2.repository.model.EdgeRow;
 import com.pm.graph_api_v2.repository.model.PathRow;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -30,21 +32,12 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Repository
-public class DuckPgqGraphQueryRepository {
+@ConditionalOnProperty(name = "graph.query-backend", havingValue = "DUCKPGQ", matchIfMissing = true)
+public class DuckPgqGraphQueryRepository implements GraphQueryBackend {
 
     private static final Logger log = LoggerFactory.getLogger(DuckPgqGraphQueryRepository.class);
     private static final String VERTEX_LABEL = "Person";
     private static final String EDGE_LABEL = "Connection";
-
-    private static final String ALL_GRAPH_NAME = "aml_graph_all";
-    private static final String KNOWS_GRAPH_NAME = "aml_graph_knows";
-    private static final String RELATIVE_GRAPH_NAME = "aml_graph_relative";
-    private static final String SAME_CITY_GRAPH_NAME = "aml_graph_same_city";
-
-    private static final String ALL_PROJECTION_TABLE = "g_pgq_edges";
-    private static final String KNOWS_PROJECTION_TABLE = "g_pgq_edges_knows";
-    private static final String RELATIVE_PROJECTION_TABLE = "g_pgq_edges_relative";
-    private static final String SAME_CITY_PROJECTION_TABLE = "g_pgq_edges_same_city";
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
@@ -59,11 +52,20 @@ public class DuckPgqGraphQueryRepository {
         this.duckPgqProperties = duckPgqProperties;
     }
 
+    @Override
+    public GraphSource source() {
+        return GraphSource.DUCKPGQ;
+    }
+
     public void initialize() {
         jdbcTemplate.execute((ConnectionCallback<Void>) connection -> {
             loadDuckPgq(connection);
-            recreateProjectionTables(connection);
-            ensureGraphs(connection);
+            if (duckPgqProperties.isSyncGraphStateOnStartup()) {
+                recreateProjectionTables(connection);
+                ensureGraphs(connection);
+            } else {
+                log.info("duckpgq graph-state synchronization is skipped at startup");
+            }
             return null;
         });
     }
@@ -85,6 +87,7 @@ public class DuckPgqGraphQueryRepository {
         });
     }
 
+    @Override
     public List<EdgeRow> findExpandEdges(Collection<String> seedNodeIds,
                                          GraphRelationFamily relationFamily,
                                          Direction direction,
@@ -107,6 +110,7 @@ public class DuckPgqGraphQueryRepository {
         });
     }
 
+    @Override
     public Optional<PathRow> findShortestPath(String sourceNodeId,
                                               String targetNodeId,
                                               GraphRelationFamily relationFamily,
@@ -200,6 +204,9 @@ public class DuckPgqGraphQueryRepository {
                 e.relation_family AS relation_family,
                 e.strength_score AS strength_score,
                 e.evidence_count AS evidence_count,
+                e.source_system AS source_system,
+                e.first_seen_at AS first_seen_at,
+                e.last_seen_at AS last_seen_at,
                 e.attrs_json AS attrs_json
               )
             )
@@ -259,21 +266,27 @@ public class DuckPgqGraphQueryRepository {
     }
 
     private void recreateProjectionTables(Connection connection) throws SQLException {
-        createProjectionTableIfMissing(connection, ALL_PROJECTION_TABLE);
-        createProjectionTableIfMissing(connection, KNOWS_PROJECTION_TABLE);
-        createProjectionTableIfMissing(connection, RELATIVE_PROJECTION_TABLE);
-        createProjectionTableIfMissing(connection, SAME_CITY_PROJECTION_TABLE);
+        createProjectionTableIfMissing(connection, GraphRelationFamily.ALL_RELATIONS.projectionTableName());
+        for (GraphRelationFamily relationFamily : GraphRelationFamily.values()) {
+            if (!relationFamily.isAllRelations()) {
+                createProjectionTableIfMissing(connection, relationFamily.projectionTableName());
+            }
+        }
 
         try (Statement statement = connection.createStatement()) {
-            statement.execute("DELETE FROM g_pgq_edges");
-            statement.execute("DELETE FROM " + KNOWS_PROJECTION_TABLE);
-            statement.execute("DELETE FROM " + RELATIVE_PROJECTION_TABLE);
-            statement.execute("DELETE FROM " + SAME_CITY_PROJECTION_TABLE);
+            statement.execute("DELETE FROM " + GraphRelationFamily.ALL_RELATIONS.projectionTableName());
+            for (GraphRelationFamily relationFamily : GraphRelationFamily.values()) {
+                if (!relationFamily.isAllRelations()) {
+                    statement.execute("DELETE FROM " + relationFamily.projectionTableName());
+                }
+            }
 
-            insertProjection(statement, ALL_PROJECTION_TABLE, null);
-            insertProjection(statement, KNOWS_PROJECTION_TABLE, "PERSON_KNOWS_PERSON");
-            insertProjection(statement, RELATIVE_PROJECTION_TABLE, "PERSON_RELATIVE_PERSON");
-            insertProjection(statement, SAME_CITY_PROJECTION_TABLE, "PERSON_SAME_CITY_PERSON");
+            insertProjection(statement, GraphRelationFamily.ALL_RELATIONS.projectionTableName(), null);
+            for (GraphRelationFamily relationFamily : GraphRelationFamily.values()) {
+                if (!relationFamily.isAllRelations()) {
+                    insertProjection(statement, relationFamily.projectionTableName(), relationFamily.name());
+                }
+            }
         }
     }
 
@@ -295,6 +308,9 @@ public class DuckPgqGraphQueryRepository {
                     relation_family VARCHAR,
                     strength_score DOUBLE DEFAULT 0,
                     evidence_count BIGINT DEFAULT 0,
+                    source_system VARCHAR,
+                    first_seen_at TIMESTAMP,
+                    last_seen_at TIMESTAMP,
                     attrs_json VARCHAR,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -304,6 +320,9 @@ public class DuckPgqGraphQueryRepository {
             statement.execute("ALTER TABLE " + tableName + " ADD COLUMN IF NOT EXISTS relation_family VARCHAR");
             statement.execute("ALTER TABLE " + tableName + " ADD COLUMN IF NOT EXISTS strength_score DOUBLE DEFAULT 0");
             statement.execute("ALTER TABLE " + tableName + " ADD COLUMN IF NOT EXISTS evidence_count BIGINT DEFAULT 0");
+            statement.execute("ALTER TABLE " + tableName + " ADD COLUMN IF NOT EXISTS source_system VARCHAR");
+            statement.execute("ALTER TABLE " + tableName + " ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMP");
+            statement.execute("ALTER TABLE " + tableName + " ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP");
         }
     }
 
@@ -326,6 +345,9 @@ public class DuckPgqGraphQueryRepository {
                 relation_family,
                 strength_score,
                 evidence_count,
+                source_system,
+                first_seen_at,
+                last_seen_at,
                 attrs_json,
                 created_at,
                 updated_at
@@ -344,6 +366,9 @@ public class DuckPgqGraphQueryRepository {
                 relation_family,
                 strength_score,
                 evidence_count,
+                source_system,
+                first_seen_at,
+                last_seen_at,
                 attrs_json,
                 created_at,
                 updated_at
@@ -367,6 +392,9 @@ public class DuckPgqGraphQueryRepository {
                 relation_family,
                 strength_score,
                 evidence_count,
+                source_system,
+                first_seen_at,
+                last_seen_at,
                 attrs_json,
                 created_at,
                 updated_at
@@ -385,6 +413,9 @@ public class DuckPgqGraphQueryRepository {
                 relation_family,
                 strength_score,
                 evidence_count,
+                source_system,
+                first_seen_at,
+                last_seen_at,
                 attrs_json,
                 created_at,
                 updated_at
@@ -395,10 +426,9 @@ public class DuckPgqGraphQueryRepository {
     }
 
     private void ensureGraphs(Connection connection) throws SQLException {
-        ensureGraph(connection, ALL_GRAPH_NAME, ALL_PROJECTION_TABLE);
-        ensureGraph(connection, KNOWS_GRAPH_NAME, KNOWS_PROJECTION_TABLE);
-        ensureGraph(connection, RELATIVE_GRAPH_NAME, RELATIVE_PROJECTION_TABLE);
-        ensureGraph(connection, SAME_CITY_GRAPH_NAME, SAME_CITY_PROJECTION_TABLE);
+        for (GraphRelationFamily relationFamily : GraphRelationFamily.values()) {
+            ensureGraph(connection, relationFamily.graphName(), relationFamily.projectionTableName());
+        }
     }
 
     private void ensureGraph(Connection connection, String graphName, String tableName) throws SQLException {
@@ -429,21 +459,11 @@ public class DuckPgqGraphQueryRepository {
     }
 
     private String graphName(GraphRelationFamily relationFamily) {
-        return switch (relationFamily) {
-            case PERSON_KNOWS_PERSON -> KNOWS_GRAPH_NAME;
-            case PERSON_RELATIVE_PERSON -> RELATIVE_GRAPH_NAME;
-            case PERSON_SAME_CITY_PERSON -> SAME_CITY_GRAPH_NAME;
-            case ALL_RELATIONS -> ALL_GRAPH_NAME;
-        };
+        return relationFamily.graphName();
     }
 
     private String projectionTable(GraphRelationFamily relationFamily) {
-        return switch (relationFamily) {
-            case PERSON_KNOWS_PERSON -> KNOWS_PROJECTION_TABLE;
-            case PERSON_RELATIVE_PERSON -> RELATIVE_PROJECTION_TABLE;
-            case PERSON_SAME_CITY_PERSON -> SAME_CITY_PROJECTION_TABLE;
-            case ALL_RELATIONS -> ALL_PROJECTION_TABLE;
-        };
+        return relationFamily.projectionTableName();
     }
 
     private String shortestPattern(Direction direction) {
@@ -558,6 +578,9 @@ public class DuckPgqGraphQueryRepository {
             rs.getString("relation_family"),
             rs.getDouble("strength_score"),
             rs.getLong("evidence_count"),
+            rs.getString("source_system"),
+            rs.getTimestamp("first_seen_at") == null ? null : rs.getTimestamp("first_seen_at").toInstant(),
+            rs.getTimestamp("last_seen_at") == null ? null : rs.getTimestamp("last_seen_at").toInstant(),
             readJsonMap(rs.getString("attrs_json"))
         );
     }
