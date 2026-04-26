@@ -10,6 +10,7 @@ public class Neo4jProperties {
     private String password = "graph-api-password";
     private String database = "neo4j";
     private boolean syncGraphStateOnStartup = true;
+    private boolean clearProjectionOnStartup = false;
 
     public String getUri() {
         return uri;
@@ -49,5 +50,13 @@ public class Neo4jProperties {
 
     public void setSyncGraphStateOnStartup(boolean syncGraphStateOnStartup) {
         this.syncGraphStateOnStartup = syncGraphStateOnStartup;
+    }
+
+    public boolean isClearProjectionOnStartup() {
+        return clearProjectionOnStartup;
+    }
+
+    public void setClearProjectionOnStartup(boolean clearProjectionOnStartup) {
+        this.clearProjectionOnStartup = clearProjectionOnStartup;
     }
 }

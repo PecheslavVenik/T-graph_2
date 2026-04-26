@@ -1,0 +1,30 @@
+id = "postgres-age"
+name = "PostgreSQL + Apache AGE"
+enabled = true
+adapter_status = "implemented"
+type = "relational-plus-openCypher-extension"
+description = "PostgreSQL baseline with Apache AGE graph extension and openCypher queries."
+startup_timeout_seconds = 900
+
+[research]
+priority = "high"
+why = "Strong operational baseline: relational storage, mature PostgreSQL ecosystem, graph extension for Cypher-like traversal."
+expected_strengths = ["operational familiarity", "SQL plus graph in one DB", "good baseline for governance and production support"]
+expected_risks = ["graph traversal performance may lag native graph engines", "extension maturity/versioning", "projection/import adapter required"]
+
+[command]
+start = "./mvnw spring-boot:run -Dspring-boot.run.profiles=local"
+
+[services]
+compose = ["postgres-age"]
+startup_grace_seconds = 12
+
+[env]
+SPRING_DATASOURCE_URL = "jdbc:duckdb:${db_path}"
+SPRING_FLYWAY_ENABLED = "false"
+SERVER_PORT = "${app_port}"
+GRAPH_QUERY_BACKEND = "POSTGRES_AGE"
+GRAPH_POSTGRES_AGE_JDBC_URL = "jdbc:postgresql://localhost:5433/graph_bench"
+GRAPH_POSTGRES_AGE_USERNAME = "graph"
+GRAPH_POSTGRES_AGE_PASSWORD = "${postgres_password}"
+GRAPH_POSTGRES_AGE_CLEAR_PROJECTION_ON_STARTUP = "true"

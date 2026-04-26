@@ -1,0 +1,31 @@
+id = "arangodb"
+name = "ArangoDB"
+enabled = true
+adapter_status = "implemented"
+type = "external-multi-model-graph"
+description = "Multi-model document/graph DB with AQL traversals; candidate when graph and document payloads should live together."
+startup_timeout_seconds = 900
+
+[research]
+priority = "medium"
+why = "Tests whether native graph traversal plus document model can simplify AML evidence payloads without losing interactive latency."
+expected_strengths = ["multi-model document/graph storage", "AQL traversal expressiveness", "single DB for graph plus evidence documents"]
+expected_risks = ["AQL adapter differs from Cypher/PGQ", "cluster licensing/operations evaluation", "projection/import adapter required"]
+
+[command]
+start = "./mvnw spring-boot:run -Dspring-boot.run.profiles=local"
+
+[services]
+compose = ["arangodb"]
+startup_grace_seconds = 12
+
+[env]
+SPRING_DATASOURCE_URL = "jdbc:duckdb:${db_path}"
+SPRING_FLYWAY_ENABLED = "false"
+SERVER_PORT = "${app_port}"
+GRAPH_QUERY_BACKEND = "ARANGODB"
+GRAPH_ARANGO_ENDPOINT = "http://localhost:8529"
+GRAPH_ARANGO_DATABASE = "graph_bench"
+GRAPH_ARANGO_USERNAME = "root"
+GRAPH_ARANGO_ROOT_PASSWORD = "${arango_root_password}"
+GRAPH_ARANGO_CLEAR_PROJECTION_ON_STARTUP = "true"

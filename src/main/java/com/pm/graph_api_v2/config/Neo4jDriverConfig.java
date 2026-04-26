@@ -13,9 +13,17 @@ public class Neo4jDriverConfig {
 
     @Bean(destroyMethod = "close")
     public Driver neo4jDriver(Neo4jProperties neo4jProperties) {
+        if (isBlank(neo4jProperties.getUsername()) || isBlank(neo4jProperties.getPassword())) {
+            throw new IllegalStateException("Neo4j username and password must be configured when graph.query-backend=NEO4J");
+        }
+
         return GraphDatabase.driver(
             neo4jProperties.getUri(),
             AuthTokens.basic(neo4jProperties.getUsername(), neo4jProperties.getPassword())
         );
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 }

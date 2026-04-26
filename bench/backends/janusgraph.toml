@@ -1,0 +1,31 @@
+id = "janusgraph"
+name = "JanusGraph"
+enabled = true
+adapter_status = "implemented"
+type = "external-distributed-gremlin-graph"
+description = "Distributed graph DB candidate via Apache TinkerPop/Gremlin; useful for scale-out comparison."
+startup_timeout_seconds = 1200
+
+[research]
+priority = "low"
+why = "Not the first choice for single-node interactive AML, but a useful scale-out/Gremlin reference when stress data outgrows embedded and single-server options."
+expected_strengths = ["scale-out architecture", "Gremlin ecosystem", "storage backend flexibility"]
+expected_risks = ["heavier operations", "higher latency for small interactive reads", "Gremlin adapter and import path required"]
+
+[command]
+start = "./mvnw spring-boot:run -Dspring-boot.run.profiles=local"
+
+[services]
+compose = ["janusgraph"]
+startup_grace_seconds = 45
+reset_before_start = true
+reset_volumes = ["graph_api_janusgraph_data"]
+
+[env]
+SPRING_DATASOURCE_URL = "jdbc:duckdb:${db_path}"
+SPRING_FLYWAY_ENABLED = "false"
+SERVER_PORT = "${app_port}"
+GRAPH_QUERY_BACKEND = "JANUSGRAPH"
+GRAPH_JANUSGRAPH_HOST = "localhost"
+GRAPH_JANUSGRAPH_PORT = "8182"
+GRAPH_JANUSGRAPH_CLEAR_PROJECTION_ON_STARTUP = "true"

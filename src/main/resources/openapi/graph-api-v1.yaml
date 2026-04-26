@@ -128,6 +128,11 @@ components:
             $ref: '#/components/schemas/SeedRef'
         relationFamily:
           $ref: '#/components/schemas/GraphRelationFamily'
+        edgeTypes:
+          type: array
+          maxItems: 100
+          items:
+            type: string
         direction:
           $ref: '#/components/schemas/Direction'
         maxNeighborsPerSeed:
@@ -303,10 +308,10 @@ components:
           minLength: 1
     SeedType:
       type: string
-      enum: [PARTY_RK, PERSON_ID, PHONE_NO, ACCOUNT_NO, CARD_MASK, TAX_ID, DEVICE_ID, IP, EMAIL, NODE_ID]
+      description: Identifier type stored in `g_identifiers`; aliases like `id`, `party`, or `phone` are accepted by the API.
     GraphRelationFamily:
       type: string
-      enum: [PERSON_KNOWS_PERSON, PERSON_RELATIVE_PERSON, PERSON_SAME_CITY_PERSON, ACCOUNT_FLOW, CUSTOMER_OWNERSHIP, SHARED_INFRASTRUCTURE, CORPORATE_CONTROL, ALL_RELATIONS]
+      description: Relation family value stored in `g_edges.relation_family`; `ALL_RELATIONS` disables family filtering.
     Direction:
       type: string
       enum: [OUTBOUND, INBOUND, BOTH]

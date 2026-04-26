@@ -7,9 +7,9 @@ import com.pm.graph_api_v2.dto.GraphExpandResponse;
 import com.pm.graph_api_v2.dto.GraphExportFormat;
 import com.pm.graph_api_v2.dto.GraphExportRequest;
 import com.pm.graph_api_v2.dto.GraphNodeSummaryResponse;
-import com.pm.graph_api_v2.dto.GraphRelationFamily;
 import com.pm.graph_api_v2.dto.ShortestPathRequest;
 import com.pm.graph_api_v2.dto.ShortestPathResponse;
+import com.pm.graph_api_v2.service.ExportedGraph;
 import com.pm.graph_api_v2.service.InvestigationService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -52,7 +52,7 @@ public class GraphController {
 
     @GetMapping("/node-summary")
     public GraphNodeSummaryResponse nodeSummary(@RequestParam @NotBlank String nodeId,
-                                                @RequestParam(required = false) GraphRelationFamily relationFamily,
+                                                @RequestParam(required = false) String relationFamily,
                                                 @RequestParam(defaultValue = "BOTH") Direction direction) {
         return investigationService.nodeSummary(nodeId, relationFamily, direction);
     }
@@ -60,7 +60,7 @@ public class GraphController {
     @PostMapping("/export")
     public ResponseEntity<byte[]> export(@Valid @RequestBody GraphExportRequest request,
                                          @RequestParam(defaultValue = "JSON") GraphExportFormat format) {
-        InvestigationService.ExportedGraph exported = investigationService.export(request, format);
+        ExportedGraph exported = investigationService.export(request, format);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(org.springframework.http.MediaType.parseMediaType(exported.contentType()));

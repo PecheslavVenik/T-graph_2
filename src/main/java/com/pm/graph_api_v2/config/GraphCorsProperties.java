@@ -6,6 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
 import java.util.List;
+import java.util.Locale;
 
 @Validated
 @ConfigurationProperties(prefix = "graph.cors")
@@ -24,7 +25,7 @@ public class GraphCorsProperties {
     }
 
     public void setAllowedOrigins(List<String> allowedOrigins) {
-        this.allowedOrigins = allowedOrigins;
+        this.allowedOrigins = normalizeList(allowedOrigins, false);
     }
 
     public List<String> getAllowedMethods() {
@@ -32,7 +33,7 @@ public class GraphCorsProperties {
     }
 
     public void setAllowedMethods(List<String> allowedMethods) {
-        this.allowedMethods = allowedMethods;
+        this.allowedMethods = normalizeList(allowedMethods, true);
     }
 
     public List<String> getAllowedHeaders() {
@@ -40,7 +41,7 @@ public class GraphCorsProperties {
     }
 
     public void setAllowedHeaders(List<String> allowedHeaders) {
-        this.allowedHeaders = allowedHeaders;
+        this.allowedHeaders = normalizeList(allowedHeaders, false);
     }
 
     public long getMaxAgeSeconds() {
@@ -49,5 +50,18 @@ public class GraphCorsProperties {
 
     public void setMaxAgeSeconds(long maxAgeSeconds) {
         this.maxAgeSeconds = maxAgeSeconds;
+    }
+
+    private List<String> normalizeList(List<String> values, boolean upperCase) {
+        if (values == null) {
+            return List.of();
+        }
+
+        return values.stream()
+            .filter(value -> value != null && !value.isBlank())
+            .map(String::trim)
+            .map(value -> upperCase ? value.toUpperCase(Locale.ROOT) : value)
+            .distinct()
+            .toList();
     }
 }

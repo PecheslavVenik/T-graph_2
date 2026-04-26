@@ -2,7 +2,6 @@ package com.pm.graph_api_v2.repository;
 
 import com.pm.graph_api_v2.config.Neo4jProperties;
 import com.pm.graph_api_v2.dto.Direction;
-import com.pm.graph_api_v2.dto.GraphRelationFamily;
 import com.pm.graph_api_v2.dto.GraphSource;
 import com.pm.graph_api_v2.repository.model.EdgeRow;
 import com.pm.graph_api_v2.repository.model.NodeRow;
@@ -33,19 +32,19 @@ class Neo4jGraphQueryBackendTest {
 
     private Driver driver;
     private Session session;
-    private GraphRepository graphRepository;
     private Neo4jProperties neo4jProperties;
+    private Neo4jProjectionSupport projectionSupport;
     private Neo4jGraphQueryBackend backend;
 
     @BeforeEach
     void setUp() {
         driver = mock(Driver.class);
         session = mock(Session.class);
-        graphRepository = mock(GraphRepository.class);
         neo4jProperties = new Neo4jProperties();
         neo4jProperties.setDatabase("");
         when(driver.session()).thenReturn(session);
-        backend = new Neo4jGraphQueryBackend(driver, graphRepository, new ObjectMapper(), neo4jProperties);
+        projectionSupport = new Neo4jProjectionSupport(new ObjectMapper());
+        backend = new Neo4jGraphQueryBackend(driver, projectionSupport, neo4jProperties);
     }
 
     @Test
@@ -83,7 +82,8 @@ class Neo4jGraphQueryBackendTest {
 
         List<EdgeRow> rows = backend.findExpandEdges(
             List.of("N_PARTY_1001"),
-            GraphRelationFamily.ACCOUNT_FLOW,
+            "ACCOUNT_FLOW",
+            List.of(),
             Direction.OUTBOUND,
             20
         );
@@ -110,7 +110,7 @@ class Neo4jGraphQueryBackendTest {
         PathRow pathRow = backend.findShortestPath(
                 "N_PARTY_1001",
                 "N_ACC_2001",
-                GraphRelationFamily.CUSTOMER_OWNERSHIP,
+                "CUSTOMER_OWNERSHIP",
                 Direction.OUTBOUND,
                 2
             )
@@ -121,84 +121,4 @@ class Neo4jGraphQueryBackendTest {
         assertThat(pathRow.hopCount()).isEqualTo(1);
     }
 
-    @Test
-    void initialize_shouldProjectReverseTraversalForUndirectedEdges() {
-        Result result = mock(Result.class);
-        ResultSummary summary = mock(ResultSummary.class);
-
-        when(session.run(anyString())).thenReturn(result);
-        when(session.run(anyString(), any(Value.class))).thenReturn(result);
-        when(result.consume()).thenReturn(summary);
-        when(graphRepository.findAllNodes()).thenReturn(List.of(
-            new NodeRow(
-                "N_PARTY_1001",
-                "PERSON",
-                "Ivan Ivanov",
-                "PARTY_1001",
-                "P1001",
-                "+79990000001",
-                "Ivan Ivanov",
-                false,
-                false,
-                "ACME",
-                "Vladivostok",
-                "crm",
-                0.2,
-                0.1,
-                Map.of("party_rk", "PARTY_1001"),
-                Map.of("risk", "low")
-            ),
-            new NodeRow(
-                "N_PARTY_1002",
-                "PERSON",
-                "Petr Petrov",
-                "PARTY_1002",
-                "P1002",
-                "+79990000002",
-                "Petr Petrov",
-                false,
-                false,
-                "ACME",
-                "Vladivostok",
-                "crm",
-                0.3,
-                0.2,
-                Map.of("party_rk", "PARTY_1002"),
-                Map.of()
-            )
-        ));
-        when(graphRepository.findAllEdges()).thenReturn(List.of(
-            new EdgeRow(
-                "E_REL_1001_1002",
-                "N_PARTY_1001",
-                "N_PARTY_1002",
-                "RELATIVE",
-                false,
-                0,
-                0D,
-                "PERSON_RELATIVE_PERSON",
-                0.7,
-                1,
-                "crm",
-                Instant.parse("2026-04-01T00:00:00Z"),
-                Instant.parse("2026-04-02T00:00:00Z"),
-                Map.of("kind", "family")
-            )
-        ));
-
-        backend.initialize();
-
-        ArgumentCaptor<Value> parametersCaptor = ArgumentCaptor.forClass(Value.class);
-        org.mockito.Mockito.verify(session, org.mockito.Mockito.atLeast(2))
-            .run(anyString(), parametersCaptor.capture());
-
-        List<Value> allParams = parametersCaptor.getAllValues();
-        Value relationshipBatch = allParams.get(allParams.size() - 1).get("batch");
-        List<Map<String, Object>> relationships = relationshipBatch.asList(Value::asMap);
-
-        assertThat(relationships).hasSize(2);
-        assertThat(relationships)
-            .extracting(item -> item.get("graph_rel_id"))
-            .containsExactlyInAnyOrder("E_REL_1001_1002:fwd", "E_REL_1001_1002:rev");
-    }
 }

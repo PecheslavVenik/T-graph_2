@@ -1,6 +1,6 @@
 package com.pm.graph_api_v2.controller;
 
-import com.pm.graph_api_v2.dto.GraphRelationFamily;
+import com.pm.graph_api_v2.util.GraphRelationFamilies;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -80,7 +80,7 @@ class GraphControllerIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(payload))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.meta.relationFamily").value("PERSON_KNOWS_PERSON"));
+            .andExpect(jsonPath("$.meta.relationFamily").value("ALL_RELATIONS"));
     }
 
     @Test
@@ -90,11 +90,11 @@ class GraphControllerIntegrationTest {
             Integer.class
         );
         Integer knowsCopies = jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM " + GraphRelationFamily.PERSON_KNOWS_PERSON.projectionTableName() + " WHERE edge_id = 'E_TX_1001_1002'",
+            "SELECT COUNT(*) FROM " + GraphRelationFamilies.projectionTableName("PERSON_KNOWS_PERSON") + " WHERE edge_id = 'E_TX_1001_1002'",
             Integer.class
         );
         Integer relativeCopiesInsideKnows = jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM " + GraphRelationFamily.PERSON_KNOWS_PERSON.projectionTableName() + " WHERE edge_id = 'E_REL_1001_1004'",
+            "SELECT COUNT(*) FROM " + GraphRelationFamilies.projectionTableName("PERSON_KNOWS_PERSON") + " WHERE edge_id = 'E_REL_1001_1004'",
             Integer.class
         );
 
@@ -311,6 +311,31 @@ class GraphControllerIntegrationTest {
             .andExpect(jsonPath("$.meta.relationFamily").value("ACCOUNT_FLOW"))
             .andExpect(jsonPath("$.edges[0].type").value("TRANSFERS_TO"))
             .andExpect(jsonPath("$.nodes[*].nodeType", hasItem("ACCOUNT")));
+    }
+
+    @Test
+    void expand_shouldAcceptLowercaseSeedTypeAliasAndEdgeTypeFilter() throws Exception {
+        String payload = """
+            {
+              "seeds": [
+                {"type": "party", "value": "PARTY_1001"}
+              ],
+              "relationFamily": "ALL_RELATIONS",
+              "edgeTypes": ["beneficial_owns"],
+              "direction": "OUTBOUND",
+              "maxNeighborsPerSeed": 10,
+              "maxNodes": 100,
+              "maxEdges": 100
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/expand")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.edges.length()").value(1))
+            .andExpect(jsonPath("$.edges[0].type").value("BENEFICIAL_OWNS"))
+            .andExpect(jsonPath("$.meta.relationFamily").value("ALL_RELATIONS"));
     }
 
     @Test

@@ -1,0 +1,22 @@
+id = "neo4j"
+name = "Neo4j Community"
+enabled = true
+adapter_status = "implemented"
+type = "external-property-graph"
+description = "Canonical DuckDB storage with startup projection sync into Neo4j and Cypher graph queries."
+startup_timeout_seconds = 900
+
+[command]
+start = "./mvnw spring-boot:run -Dspring-boot.run.profiles=local"
+
+[services]
+compose = ["neo4j"]
+
+[env]
+SPRING_DATASOURCE_URL = "jdbc:duckdb:${db_path}"
+SPRING_FLYWAY_ENABLED = "false"
+SERVER_PORT = "${app_port}"
+GRAPH_QUERY_BACKEND = "NEO4J"
+GRAPH_NEO4J_SYNC_GRAPH_STATE_ON_STARTUP = "true"
+GRAPH_NEO4J_CLEAR_PROJECTION_ON_STARTUP = "true"
+GRAPH_NEO4J_PASSWORD = "${neo4j_password}"

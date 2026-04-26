@@ -1,4 +1,4 @@
-.PHONY: run test up down logs smoke
+.PHONY: run test up down logs smoke bench bench-data bench-suite bench-backends
 
 run:
 	./mvnw spring-boot:run -Dspring-boot.run.profiles=local
@@ -18,3 +18,14 @@ logs:
 smoke:
 	./scripts/smoke.sh
 
+bench:
+	./scripts/bench.sh
+
+bench-data:
+	./scripts/bench-data.sh
+
+bench-suite:
+	./scripts/bench-suite.sh
+
+bench-backends:
+	./scripts/bench-suite.sh

@@ -1,0 +1,19 @@
+id = "new_backend"
+name = "New Backend"
+enabled = false
+adapter_status = "adapter_required"
+type = "adapter-template"
+description = "Copy this file to bench/backends/<id>.toml and implement the matching GraphQueryBackend."
+startup_timeout_seconds = 600
+
+[command]
+start = "./mvnw spring-boot:run -Dspring-boot.run.profiles=local"
+
+[services]
+compose = []
+
+[env]
+SPRING_DATASOURCE_URL = "jdbc:duckdb:${db_path}"
+SPRING_FLYWAY_ENABLED = "false"
+SERVER_PORT = "${app_port}"
+GRAPH_QUERY_BACKEND = "NEW_BACKEND"

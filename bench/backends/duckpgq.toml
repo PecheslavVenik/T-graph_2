@@ -1,0 +1,19 @@
+id = "duckpgq"
+name = "DuckDB + DuckPGQ"
+enabled = true
+adapter_status = "implemented"
+type = "embedded-sql-pgq"
+description = "Canonical DuckDB storage with DuckPGQ graph queries in the application process."
+startup_timeout_seconds = 300
+
+[command]
+start = "./mvnw spring-boot:run -Dspring-boot.run.profiles=local"
+
+[services]
+compose = []
+
+[env]
+SPRING_DATASOURCE_URL = "jdbc:duckdb:${db_path}"
+SPRING_FLYWAY_ENABLED = "false"
+SERVER_PORT = "${app_port}"
+GRAPH_QUERY_BACKEND = "DUCKPGQ"

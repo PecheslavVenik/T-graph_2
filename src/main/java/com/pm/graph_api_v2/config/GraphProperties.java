@@ -1,6 +1,6 @@
 package com.pm.graph_api_v2.config;
 
-import com.pm.graph_api_v2.dto.GraphRelationFamily;
+import com.pm.graph_api_v2.util.GraphRelationFamilies;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -34,7 +34,7 @@ public class GraphProperties {
     @Max(100)
     private int hubPenaltyPercent = 35;
 
-    private GraphRelationFamily defaultRelationFamily = GraphRelationFamily.PERSON_KNOWS_PERSON;
+    private String defaultRelationFamily = GraphRelationFamilies.ALL_RELATIONS;
 
     public int getDefaultMaxNeighborsPerSeed() {
         return defaultMaxNeighborsPerSeed;
@@ -84,11 +84,12 @@ public class GraphProperties {
         this.hubPenaltyPercent = hubPenaltyPercent;
     }
 
-    public GraphRelationFamily getDefaultRelationFamily() {
+    public String getDefaultRelationFamily() {
         return defaultRelationFamily;
     }
 
-    public void setDefaultRelationFamily(GraphRelationFamily defaultRelationFamily) {
-        this.defaultRelationFamily = defaultRelationFamily;
+    public void setDefaultRelationFamily(String defaultRelationFamily) {
+        String normalized = GraphRelationFamilies.normalize(defaultRelationFamily);
+        this.defaultRelationFamily = normalized == null ? GraphRelationFamilies.ALL_RELATIONS : normalized;
     }
 }

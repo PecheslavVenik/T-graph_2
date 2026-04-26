@@ -1,0 +1,127 @@
+name = "aml-graph-research"
+version = "1"
+description = "Research workload for AML-style interactive graph investigation."
+default_backends = ["duckpgq", "neo4j", "memgraph", "postgres-age", "arangodb", "janusgraph", "kuzu"]
+default_cases = [
+  "health",
+  "dictionary",
+  "node_summary",
+  "expand_person",
+  "expand_account_flow_hub",
+  "shortest_path_depth4"
+]
+
+[dataset]
+generator = "./scripts/bench-data.sh"
+db_path = "data/graph_bench.duckdb"
+scale = "serious"
+
+[runner]
+requests = 300
+concurrency = 8
+warmup = 30
+timeout_seconds = 30
+app_port = 8080
+
+[seeds]
+party_rk = "BENCH_PARTY_0000001"
+target_party_rk = "BENCH_PARTY_0000004"
+account_no = "BENCH_ACC_0000001"
+node_id = "N_BENCH_PERSON_0000001"
+path_relation_family = "PERSON_KNOWS_PERSON"
+
+[startup_slo]
+weight = 0.10
+ideal_seconds = 30
+good_seconds = 90
+acceptable_seconds = 300
+
+[case.health]
+title = "HTTP health"
+method = "GET"
+path = "/actuator/health"
+benchmark_family = "control"
+weight = 0.00
+ideal_p95_ms = 10
+good_p95_ms = 25
+acceptable_p95_ms = 100
+
+[case.dictionary]
+title = "Dictionary metadata"
+method = "GET"
+path = "/api/v1/graph/dictionary"
+benchmark_family = "domain metadata lookup"
+weight = 0.05
+ideal_p95_ms = 20
+good_p95_ms = 40
+acceptable_p95_ms = 100
+
+[case.node_summary]
+title = "Node neighborhood summary"
+method = "GET"
+path = "/api/v1/graph/node-summary?nodeId=${node_id}"
+benchmark_family = "LDBC SNB Interactive inspired: one-hop read"
+weight = 0.15
+ideal_p95_ms = 40
+good_p95_ms = 75
+acceptable_p95_ms = 150
+
+[case.expand_person]
+title = "Person one-hop expansion"
+method = "POST"
+path = "/api/v1/graph/expand"
+benchmark_family = "LDBC SNB Interactive / Graph500 BFS inspired"
+weight = 0.25
+ideal_p95_ms = 100
+good_p95_ms = 200
+acceptable_p95_ms = 500
+body = """
+{
+  "seeds": [{"type": "PARTY_RK", "value": "${party_rk}"}],
+  "direction": "OUTBOUND",
+  "maxNeighborsPerSeed": 10,
+  "maxNodes": 100,
+  "maxEdges": 100,
+  "includeAttributes": true
+}
+"""
+
+[case.expand_account_flow_hub]
+title = "Account-flow hub expansion"
+method = "POST"
+path = "/api/v1/graph/expand"
+benchmark_family = "LinkBench / high-degree traversal inspired"
+weight = 0.25
+ideal_p95_ms = 180
+good_p95_ms = 350
+acceptable_p95_ms = 800
+body = """
+{
+  "seeds": [{"type": "ACCOUNT_NO", "value": "${account_no}"}],
+  "relationFamily": "ACCOUNT_FLOW",
+  "direction": "OUTBOUND",
+  "maxNeighborsPerSeed": 10,
+  "maxNodes": 100,
+  "maxEdges": 100,
+  "includeAttributes": true
+}
+"""
+
+[case.shortest_path_depth4]
+title = "Shortest path, depth <= 4"
+method = "POST"
+path = "/api/v1/graph/shortest-path"
+benchmark_family = "GAP Benchmark Suite / Graph500 traversal inspired"
+weight = 0.30
+ideal_p95_ms = 250
+good_p95_ms = 450
+acceptable_p95_ms = 1000
+body = """
+{
+  "source": {"type": "PARTY_RK", "value": "${party_rk}"},
+  "target": {"type": "PARTY_RK", "value": "${target_party_rk}"},
+  "relationFamily": "${path_relation_family}",
+  "direction": "OUTBOUND",
+  "maxDepth": 4
+}
+"""

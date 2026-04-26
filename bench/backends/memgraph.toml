@@ -1,0 +1,28 @@
+id = "memgraph"
+name = "Memgraph"
+enabled = true
+adapter_status = "implemented"
+type = "external-cypher-property-graph"
+description = "Cypher-compatible in-memory-first graph DB for low-latency traversals and streaming-style projection experiments."
+startup_timeout_seconds = 900
+
+[research]
+priority = "high"
+why = "Good Neo4j/Cypher comparison point with different storage/execution trade-offs; relevant for interactive AML traversal latency."
+expected_strengths = ["low-latency graph traversals", "Cypher compatibility", "streaming ingestion story"]
+expected_risks = ["memory footprint on stress datasets", "separate operational service", "adapter/import work required"]
+
+[command]
+start = "./mvnw spring-boot:run -Dspring-boot.run.profiles=local"
+
+[services]
+compose = ["memgraph"]
+startup_grace_seconds = 3
+
+[env]
+SPRING_DATASOURCE_URL = "jdbc:duckdb:${db_path}"
+SPRING_FLYWAY_ENABLED = "false"
+SERVER_PORT = "${app_port}"
+GRAPH_QUERY_BACKEND = "MEMGRAPH"
+GRAPH_MEMGRAPH_URI = "bolt://localhost:7688"
+GRAPH_MEMGRAPH_CLEAR_PROJECTION_ON_STARTUP = "true"

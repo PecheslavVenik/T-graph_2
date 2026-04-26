@@ -8,7 +8,7 @@ import jakarta.validation.constraints.NotNull;
 public record ShortestPathRequest(
     @NotNull @Valid SeedRef source,
     @NotNull @Valid SeedRef target,
-    GraphRelationFamily relationFamily,
+    String relationFamily,
     @NotNull Direction direction,
     @Min(1) @Max(10) Integer maxDepth
 ) {

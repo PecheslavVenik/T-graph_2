@@ -70,6 +70,31 @@ make smoke
 ./scripts/smoke.sh
 ```
 
+## Benchmarking СУБД
+Основной research runner сравнивает backend-и по одному workload-у и пишет воспроизводимый отчет:
+```bash
+BENCH_PREPARE_DATA=true BENCH_SCALE=serious BENCH_REQUESTS=300 BENCH_CONCURRENCY=8 make bench-suite
+```
+
+Backend-и подключаются декларативно через `bench/backends/*.toml`, workload-и через `bench/workloads/*.toml`. Новый backend добавляется реализацией `GraphQueryBackend` и отдельным TOML-файлом, без правки benchmark runner-а.
+
+Список зарегистрированных СУБД и статус adapter-а:
+```bash
+./scripts/bench-suite.sh --list-backends
+```
+
+Быстрый curl-based smoke benchmark против уже запущенного приложения:
+```bash
+make bench
+```
+
+Настройки quick benchmark:
+```bash
+BENCH_REQUESTS=300 BENCH_CONCURRENCY=8 BENCH_WARMUP=20 ./scripts/bench.sh http://localhost:8080
+```
+
+Подробно: `docs/benchmarking.md`.
+
 ## Примеры запросов
 Базовый URL:
 ```bash
@@ -190,11 +215,25 @@ curl -s -X POST "$BASE/graph/export?format=CSV" \
 - `GRAPH_NEO4J_PASSWORD=graph-api-password`
 - `GRAPH_NEO4J_DATABASE=neo4j`
 - `GRAPH_NEO4J_SYNC_GRAPH_STATE_ON_STARTUP=true|false`
+- `GRAPH_NEO4J_CLEAR_PROJECTION_ON_STARTUP=true|false`
 
 Поведение:
 - Neo4j используется как graph query backend, а canonical `g_nodes/g_edges/g_identifiers` по-прежнему живут в DuckDB
 - при `sync-graph-state-on-startup=true` backend на старте пересобирает projection graph в Neo4j из текущих данных DuckDB
+- по умолчанию sync делает upsert projection-узлов/ребер без массового удаления; `clear-projection-on-startup=true` удаляет только projection-узлы с owner marker `graph_api_v2`
 - API-контракт не меняется, но `meta.source` становится `NEO4J`
+
+## Production profile
+Для прода запускайте с профилем `prod` и задавайте секреты/разрешенные origin-ы явно:
+
+```bash
+SPRING_PROFILES_ACTIVE=prod \
+GRAPH_CORS_ALLOWED_ORIGINS=https://app.example.com \
+GRAPH_NEO4J_PASSWORD=... \
+java -jar app.jar
+```
+
+В `prod` профиле Swagger/OpenAPI выключены по умолчанию, health details скрыты, unsigned DuckDB extensions запрещены по умолчанию, а Neo4j startup sync выключен до явного `GRAPH_NEO4J_SYNC_GRAPH_STATE_ON_STARTUP=true`.
 
 ## Для фронта и ML-команды
 - Основной merge-friendly формат: `nodes[]`, `edges[]`, `meta`

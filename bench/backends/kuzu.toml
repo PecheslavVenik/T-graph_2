@@ -1,0 +1,27 @@
+id = "kuzu"
+name = "Kuzu"
+enabled = true
+adapter_status = "implemented"
+type = "embedded-columnar-property-graph"
+description = "Embedded columnar property graph DB with Cypher support; candidate for local analytical graph workloads."
+startup_timeout_seconds = 600
+
+[research]
+priority = "medium"
+why = "Useful embedded alternative to DuckDB/DuckPGQ when graph traversals and Cypher-style modeling matter more than SQL-first storage."
+expected_strengths = ["embedded deployment", "columnar graph storage", "analytical graph queries"]
+expected_risks = ["Java dependency and release-status review required", "schema/import adapter required", "less operational tooling than Neo4j"]
+
+[command]
+start = "./mvnw spring-boot:run -Dspring-boot.run.profiles=local"
+
+[services]
+compose = []
+
+[env]
+SPRING_DATASOURCE_URL = "jdbc:duckdb:${db_path}"
+SPRING_FLYWAY_ENABLED = "false"
+SERVER_PORT = "${app_port}"
+GRAPH_QUERY_BACKEND = "KUZU"
+GRAPH_KUZU_PATH = "${kuzu_path}"
+GRAPH_KUZU_CLEAR_PROJECTION_ON_STARTUP = "true"

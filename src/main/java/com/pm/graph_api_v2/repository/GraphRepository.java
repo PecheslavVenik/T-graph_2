@@ -1,43 +1,37 @@
 package com.pm.graph_api_v2.repository;
 
 import com.pm.graph_api_v2.dto.Direction;
-import com.pm.graph_api_v2.dto.GraphRelationFamily;
 import com.pm.graph_api_v2.dto.SeedRef;
 import com.pm.graph_api_v2.repository.model.EdgeRow;
 import com.pm.graph_api_v2.repository.model.FacetCountRow;
 import com.pm.graph_api_v2.repository.model.NodeRow;
 import com.pm.graph_api_v2.repository.model.NodeNeighborhoodSummaryRow;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.pm.graph_api_v2.util.GraphSeedTypes;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
-import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.ObjectMapper;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Timestamp;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 @Repository
 public class GraphRepository {
 
-    private static final Logger log = LoggerFactory.getLogger(GraphRepository.class);
-
     private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper;
+    private final GraphRecordSupport graphRecordSupport;
+    private final GraphNeighborhoodSupport graphNeighborhoodSupport;
 
-    public GraphRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    public GraphRepository(JdbcTemplate jdbcTemplate,
+                           GraphRecordSupport graphRecordSupport,
+                           GraphNeighborhoodSupport graphNeighborhoodSupport) {
         this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
+        this.graphRecordSupport = graphRecordSupport;
+        this.graphNeighborhoodSupport = graphNeighborhoodSupport;
     }
 
     public LinkedHashSet<String> resolveNodeIds(List<SeedRef> seeds) {
@@ -54,22 +48,25 @@ public class GraphRepository {
             return Optional.empty();
         }
 
+        String identifierType = GraphSeedTypes.normalize(seed.type());
+        if (identifierType == null) {
+            return Optional.empty();
+        }
+
         Optional<String> identifierMatch = queryNodeId(
             "SELECT node_id FROM g_identifiers WHERE id_type = ? AND id_value = ? LIMIT 1",
-            seed.type().name(),
+            identifierType,
             value
         );
         if (identifierMatch.isPresent()) {
             return identifierMatch;
         }
 
-        return switch (seed.type()) {
-            case NODE_ID -> queryNodeId("SELECT node_id FROM g_nodes WHERE node_id = ? LIMIT 1", value);
-            case PARTY_RK -> queryNodeId("SELECT node_id FROM g_nodes WHERE party_rk = ? LIMIT 1", value);
-            case PERSON_ID -> queryNodeId("SELECT node_id FROM g_nodes WHERE person_id = ? LIMIT 1", value);
-            case PHONE_NO -> queryNodeId("SELECT node_id FROM g_nodes WHERE phone_no = ? LIMIT 1", value);
-            case ACCOUNT_NO, CARD_MASK, TAX_ID, DEVICE_ID, IP, EMAIL -> Optional.empty();
-        };
+        if (GraphSeedTypes.isNodeId(identifierType)) {
+            return queryNodeId("SELECT node_id FROM g_nodes WHERE node_id = ? LIMIT 1", value);
+        }
+
+        return Optional.empty();
     }
 
     public List<NodeRow> findNodesByIds(Collection<String> nodeIds) {
@@ -77,12 +74,12 @@ public class GraphRepository {
             return List.of();
         }
 
-        Map<String, Map<String, String>> identifiersByNodeId = findIdentifiersByNodeIds(nodeIds);
+        Map<String, Map<String, String>> identifiersByNodeId = graphRecordSupport.findIdentifiersByNodeIds(nodeIds);
 
         String sql = "SELECT node_id, node_type, display_name, party_rk, person_id, phone_no, full_name, is_blacklist, is_vip, employer, city, source_system, pagerank_score, hub_score, attrs_json " +
-            "FROM g_nodes WHERE node_id IN (" + placeholders(nodeIds.size()) + ")";
+            "FROM g_nodes WHERE node_id IN (" + graphRecordSupport.placeholders(nodeIds.size()) + ")";
 
-        return jdbcTemplate.query(sql, (rs, ignored) -> mapNodeRow(rs, identifiersByNodeId), nodeIds.toArray());
+        return jdbcTemplate.query(sql, (rs, ignored) -> graphRecordSupport.mapNodeRow(rs, identifiersByNodeId), nodeIds.toArray());
     }
 
     public Optional<NodeRow> findNodeById(String nodeId) {
@@ -99,6 +96,26 @@ public class GraphRepository {
             (rs, rowNum) -> rs.getString("node_id")
         );
         return findNodesByIds(nodeIds);
+    }
+
+    public void forEachNodeBatch(int batchSize, Consumer<List<NodeRow>> consumer) {
+        int effectiveBatchSize = Math.max(1, batchSize);
+        String lastNodeId = "";
+
+        while (true) {
+            List<String> nodeIds = jdbcTemplate.query(
+                "SELECT node_id FROM g_nodes WHERE node_id > ? ORDER BY node_id LIMIT ?",
+                (rs, rowNum) -> rs.getString("node_id"),
+                lastNodeId,
+                effectiveBatchSize
+            );
+            if (nodeIds.isEmpty()) {
+                return;
+            }
+
+            consumer.accept(findNodesByIds(nodeIds));
+            lastNodeId = nodeIds.get(nodeIds.size() - 1);
+        }
     }
 
     public List<NodeRow> findNodesByIdsInOrder(List<String> nodeIds) {
@@ -127,16 +144,33 @@ public class GraphRepository {
         }
 
         String sql = "SELECT edge_id, from_node_id, to_node_id, edge_type, directed, tx_count, tx_sum, relation_family, strength_score, evidence_count, source_system, first_seen_at, last_seen_at, attrs_json " +
-            "FROM g_edges WHERE edge_id IN (" + placeholders(edgeIds.size()) + ")";
+            "FROM g_edges WHERE edge_id IN (" + graphRecordSupport.placeholders(edgeIds.size()) + ")";
 
-        return jdbcTemplate.query(sql, this::mapEdgeRow, edgeIds.toArray());
+        return jdbcTemplate.query(sql, graphRecordSupport::mapEdgeRow, edgeIds.toArray());
     }
 
     public List<EdgeRow> findAllEdges() {
         String sql = "SELECT edge_id, from_node_id, to_node_id, edge_type, directed, tx_count, tx_sum, relation_family, strength_score, evidence_count, source_system, first_seen_at, last_seen_at, attrs_json " +
             "FROM g_edges ORDER BY edge_id";
 
-        return jdbcTemplate.query(sql, this::mapEdgeRow);
+        return jdbcTemplate.query(sql, graphRecordSupport::mapEdgeRow);
+    }
+
+    public void forEachEdgeBatch(int batchSize, Consumer<List<EdgeRow>> consumer) {
+        int effectiveBatchSize = Math.max(1, batchSize);
+        String lastEdgeId = "";
+        String sql = "SELECT edge_id, from_node_id, to_node_id, edge_type, directed, tx_count, tx_sum, relation_family, strength_score, evidence_count, source_system, first_seen_at, last_seen_at, attrs_json " +
+            "FROM g_edges WHERE edge_id > ? ORDER BY edge_id LIMIT ?";
+
+        while (true) {
+            List<EdgeRow> rows = jdbcTemplate.query(sql, graphRecordSupport::mapEdgeRow, lastEdgeId, effectiveBatchSize);
+            if (rows.isEmpty()) {
+                return;
+            }
+
+            consumer.accept(rows);
+            lastEdgeId = rows.get(rows.size() - 1).edgeId();
+        }
     }
 
     public List<EdgeRow> findEdgesByIdsInOrder(List<String> edgeIds) {
@@ -192,64 +226,27 @@ public class GraphRepository {
     }
 
     public NodeNeighborhoodSummaryRow summarizeNeighborhood(String nodeId,
-                                                            GraphRelationFamily relationFamily,
+                                                            String relationFamily,
                                                             Direction direction) {
-        NeighborhoodQuery selectedScope = neighborhoodQuery(nodeId, relationFamily, direction);
-        NeighborhoodQuery outboundScope = neighborhoodQuery(nodeId, relationFamily, Direction.OUTBOUND);
-        NeighborhoodQuery inboundScope = neighborhoodQuery(nodeId, relationFamily, Direction.INBOUND);
-
-        NeighborhoodAggregate selected = aggregateNeighborhood(selectedScope);
-        NeighborhoodAggregate outbound = aggregateNeighborhood(outboundScope);
-        NeighborhoodAggregate inbound = aggregateNeighborhood(inboundScope);
-
-        return new NodeNeighborhoodSummaryRow(
-            selected.edgeCount(),
-            selected.uniqueNeighborCount(),
-            outbound.edgeCount(),
-            inbound.edgeCount()
-        );
+        return graphNeighborhoodSupport.summarizeNeighborhood(nodeId, relationFamily, direction);
     }
 
     public List<FacetCountRow> countRelationFamiliesAroundNode(String nodeId,
-                                                               GraphRelationFamily relationFamily,
+                                                               String relationFamily,
                                                                Direction direction) {
-        NeighborhoodQuery scope = neighborhoodQuery(nodeId, relationFamily, direction);
-        String sql = scope.cteSql() + """
-            SELECT relation_family AS facet_key, COUNT(*) AS facet_count
-            FROM candidate_edges
-            WHERE relation_family IS NOT NULL AND relation_family <> ''
-            GROUP BY relation_family
-            ORDER BY facet_count DESC, facet_key
-            """;
-        return jdbcTemplate.query(sql, this::mapFacetCountRow, scope.params());
+        return graphNeighborhoodSupport.countRelationFamiliesAroundNode(nodeId, relationFamily, direction);
     }
 
     public List<FacetCountRow> countEdgeTypesAroundNode(String nodeId,
-                                                        GraphRelationFamily relationFamily,
+                                                        String relationFamily,
                                                         Direction direction) {
-        NeighborhoodQuery scope = neighborhoodQuery(nodeId, relationFamily, direction);
-        String sql = scope.cteSql() + """
-            SELECT edge_type AS facet_key, COUNT(*) AS facet_count
-            FROM candidate_edges
-            WHERE edge_type IS NOT NULL AND edge_type <> ''
-            GROUP BY edge_type
-            ORDER BY facet_count DESC, facet_key
-            """;
-        return jdbcTemplate.query(sql, this::mapFacetCountRow, scope.params());
+        return graphNeighborhoodSupport.countEdgeTypesAroundNode(nodeId, relationFamily, direction);
     }
 
     public List<FacetCountRow> countNeighborNodeTypesAroundNode(String nodeId,
-                                                                GraphRelationFamily relationFamily,
+                                                                String relationFamily,
                                                                 Direction direction) {
-        NeighborhoodQuery scope = neighborhoodQuery(nodeId, relationFamily, direction);
-        String sql = scope.cteSql() + """
-            SELECT COALESCE(n.node_type, 'UNKNOWN') AS facet_key, COUNT(DISTINCT candidate_edges.neighbor_node_id) AS facet_count
-            FROM candidate_edges
-            LEFT JOIN g_nodes n ON n.node_id = candidate_edges.neighbor_node_id
-            GROUP BY COALESCE(n.node_type, 'UNKNOWN')
-            ORDER BY facet_count DESC, facet_key
-            """;
-        return jdbcTemplate.query(sql, this::mapFacetCountRow, scope.params());
+        return graphNeighborhoodSupport.countNeighborNodeTypesAroundNode(nodeId, relationFamily, direction);
     }
 
     private Optional<String> queryNodeId(String sql, Object... params) {
@@ -265,165 +262,4 @@ public class GraphRepository {
         return !rows.isEmpty();
     }
 
-    private NeighborhoodAggregate aggregateNeighborhood(NeighborhoodQuery scope) {
-        String sql = scope.cteSql() + """
-            SELECT
-                COUNT(*) AS edge_count,
-                COUNT(DISTINCT neighbor_node_id) AS unique_neighbor_count
-            FROM candidate_edges
-            """;
-
-        List<NeighborhoodAggregate> rows = jdbcTemplate.query(sql, (rs, rowNum) -> new NeighborhoodAggregate(
-            rs.getInt("edge_count"),
-            rs.getInt("unique_neighbor_count")
-        ), scope.params());
-
-        if (rows.isEmpty()) {
-            return new NeighborhoodAggregate(0, 0);
-        }
-        return rows.get(0);
-    }
-
-    private NeighborhoodQuery neighborhoodQuery(String nodeId,
-                                                GraphRelationFamily relationFamily,
-                                                Direction direction) {
-        List<Object> params = new ArrayList<>();
-        String neighborExpression;
-        String whereClause;
-
-        switch (direction) {
-            case OUTBOUND -> {
-                neighborExpression = "CASE WHEN from_node_id = ? THEN to_node_id ELSE from_node_id END";
-                whereClause = "(from_node_id = ? OR (directed = FALSE AND to_node_id = ?))";
-                params.add(nodeId);
-                params.add(nodeId);
-                params.add(nodeId);
-            }
-            case INBOUND -> {
-                neighborExpression = "CASE WHEN to_node_id = ? THEN from_node_id ELSE to_node_id END";
-                whereClause = "(to_node_id = ? OR (directed = FALSE AND from_node_id = ?))";
-                params.add(nodeId);
-                params.add(nodeId);
-                params.add(nodeId);
-            }
-            case BOTH -> {
-                neighborExpression = "CASE WHEN from_node_id = ? THEN to_node_id ELSE from_node_id END";
-                whereClause = "(from_node_id = ? OR to_node_id = ?)";
-                params.add(nodeId);
-                params.add(nodeId);
-                params.add(nodeId);
-            }
-            default -> throw new IllegalStateException("Unsupported direction: " + direction);
-        }
-
-        String relationFilter = "";
-        if (!relationFamily.isAllRelations()) {
-            relationFilter = " AND relation_family = ?";
-            params.add(relationFamily.name());
-        }
-
-        String cteSql = """
-            WITH candidate_edges AS (
-                SELECT
-                    edge_id,
-                    edge_type,
-                    relation_family,
-                    %s AS neighbor_node_id
-                FROM g_edges
-                WHERE %s%s
-            )
-            """.formatted(neighborExpression, whereClause, relationFilter);
-
-        return new NeighborhoodQuery(cteSql, params.toArray());
-    }
-
-    private String placeholders(int count) {
-        return String.join(",", Collections.nCopies(count, "?"));
-    }
-
-    private FacetCountRow mapFacetCountRow(ResultSet rs, int ignored) throws SQLException {
-        return new FacetCountRow(rs.getString("facet_key"), rs.getInt("facet_count"));
-    }
-
-    private NodeRow mapNodeRow(ResultSet rs, Map<String, Map<String, String>> identifiersByNodeId) throws SQLException {
-        String nodeId = rs.getString("node_id");
-        return new NodeRow(
-            nodeId,
-            rs.getString("node_type"),
-            rs.getString("display_name"),
-            rs.getString("party_rk"),
-            rs.getString("person_id"),
-            rs.getString("phone_no"),
-            rs.getString("full_name"),
-            rs.getBoolean("is_blacklist"),
-            rs.getBoolean("is_vip"),
-            rs.getString("employer"),
-            rs.getString("city"),
-            rs.getString("source_system"),
-            rs.getDouble("pagerank_score"),
-            rs.getDouble("hub_score"),
-            identifiersByNodeId.getOrDefault(nodeId, Map.of()),
-            readJsonMap(rs.getString("attrs_json"))
-        );
-    }
-
-    private EdgeRow mapEdgeRow(ResultSet rs, int ignored) throws SQLException {
-        return new EdgeRow(
-            rs.getString("edge_id"),
-            rs.getString("from_node_id"),
-            rs.getString("to_node_id"),
-            rs.getString("edge_type"),
-            rs.getBoolean("directed"),
-            rs.getLong("tx_count"),
-            rs.getDouble("tx_sum"),
-            rs.getString("relation_family"),
-            rs.getDouble("strength_score"),
-            rs.getLong("evidence_count"),
-            rs.getString("source_system"),
-            toInstant(rs.getTimestamp("first_seen_at")),
-            toInstant(rs.getTimestamp("last_seen_at")),
-            readJsonMap(rs.getString("attrs_json"))
-        );
-    }
-
-    private Map<String, Map<String, String>> findIdentifiersByNodeIds(Collection<String> nodeIds) {
-        if (nodeIds.isEmpty()) {
-            return Map.of();
-        }
-
-        String sql = "SELECT node_id, id_type, id_value FROM g_identifiers WHERE node_id IN (" + placeholders(nodeIds.size()) + ") ORDER BY node_id, id_type, id_value";
-
-        Map<String, Map<String, String>> identifiersByNodeId = new LinkedHashMap<>();
-        jdbcTemplate.query(sql, rs -> {
-            String nodeId = rs.getString("node_id");
-            identifiersByNodeId
-                .computeIfAbsent(nodeId, ignored -> new LinkedHashMap<>())
-                .putIfAbsent(rs.getString("id_type").toLowerCase(), rs.getString("id_value"));
-        }, nodeIds.toArray());
-        return identifiersByNodeId;
-    }
-
-    private Instant toInstant(Timestamp timestamp) {
-        return timestamp == null ? null : timestamp.toInstant();
-    }
-
-    private Map<String, Object> readJsonMap(String rawJson) {
-        if (rawJson == null || rawJson.isBlank()) {
-            return Map.of();
-        }
-
-        try {
-            return objectMapper.readValue(rawJson, new TypeReference<>() {
-            });
-        } catch (Exception ex) {
-            log.debug("Failed to parse attrs_json '{}': {}", rawJson, ex.getMessage());
-            return Map.of();
-        }
-    }
-
-    private record NeighborhoodQuery(String cteSql, Object[] params) {
-    }
-
-    private record NeighborhoodAggregate(int edgeCount, int uniqueNeighborCount) {
-    }
 }

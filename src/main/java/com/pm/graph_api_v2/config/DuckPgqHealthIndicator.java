@@ -1,6 +1,6 @@
 package com.pm.graph_api_v2.config;
 
-import com.pm.graph_api_v2.repository.DuckPgqGraphQueryRepository;
+import com.pm.graph_api_v2.repository.DuckPgqRuntimeManager;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
@@ -10,15 +10,15 @@ import org.springframework.stereotype.Component;
 @ConditionalOnProperty(name = "graph.query-backend", havingValue = "DUCKPGQ", matchIfMissing = true)
 public class DuckPgqHealthIndicator implements HealthIndicator {
 
-    private final DuckPgqGraphQueryRepository duckPgqGraphQueryRepository;
+    private final DuckPgqRuntimeManager duckPgqRuntimeManager;
 
-    public DuckPgqHealthIndicator(DuckPgqGraphQueryRepository duckPgqGraphQueryRepository) {
-        this.duckPgqGraphQueryRepository = duckPgqGraphQueryRepository;
+    public DuckPgqHealthIndicator(DuckPgqRuntimeManager duckPgqRuntimeManager) {
+        this.duckPgqRuntimeManager = duckPgqRuntimeManager;
     }
 
     @Override
     public Health health() {
-        boolean loaded = duckPgqGraphQueryRepository.isDuckPgqLoaded();
+        boolean loaded = duckPgqRuntimeManager.isDuckPgqLoaded();
         if (loaded) {
             return Health.up().withDetail("duckpgq.loaded", true).build();
         }

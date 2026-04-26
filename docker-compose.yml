@@ -36,6 +36,63 @@ services:
       - graph_api_neo4j_data:/data
     restart: unless-stopped
 
+  memgraph:
+    image: memgraph/memgraph:latest
+    container_name: graph-api-v2-memgraph
+    profiles: ["bench-candidates"]
+    ports:
+      - "7688:7687"
+    volumes:
+      - graph_api_memgraph_data:/var/opt/memgraph
+    restart: unless-stopped
+
+  postgres-age:
+    image: apache/age:latest
+    container_name: graph-api-v2-postgres-age
+    profiles: ["bench-candidates"]
+    environment:
+      POSTGRES_DB: graph_bench
+      POSTGRES_USER: graph
+      POSTGRES_PASSWORD: graph-api-password
+    ports:
+      - "5433:5432"
+    volumes:
+      - graph_api_postgres_age_data:/var/lib/postgresql
+    restart: unless-stopped
+
+  arangodb:
+    image: arangodb:3.12
+    container_name: graph-api-v2-arangodb
+    profiles: ["bench-candidates"]
+    environment:
+      ARANGO_ROOT_PASSWORD: graph-api-password
+    ports:
+      - "8529:8529"
+    volumes:
+      - graph_api_arangodb_data:/var/lib/arangodb3
+      - graph_api_arangodb_apps:/var/lib/arangodb3-apps
+    restart: unless-stopped
+
+  janusgraph:
+    image: janusgraph/janusgraph:latest
+    container_name: graph-api-v2-janusgraph
+    profiles: ["bench-candidates"]
+    environment:
+      JANUS_STORAGE_TIMEOUT: ""
+      JAVA_OPTIONS_FILE: /dev/null
+      JAVA_OPTIONS: "-Xms128m -Xmx768m -XX:+UseG1GC -Xss256k -Dgremlin.io.kryoShimService=org.janusgraph.hadoop.serialize.JanusGraphKryoShimService"
+      gremlinserver.evaluationTimeout: "120000"
+    ports:
+      - "8182:8182"
+    volumes:
+      - graph_api_janusgraph_data:/var/lib/janusgraph
+    restart: unless-stopped
+
 volumes:
   graph_api_data:
   graph_api_neo4j_data:
+  graph_api_memgraph_data:
+  graph_api_postgres_age_data:
+  graph_api_arangodb_data:
+  graph_api_arangodb_apps:
+  graph_api_janusgraph_data:
