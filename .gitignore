@@ -39,3 +39,8 @@ data/
 logs/
 __pycache__/
 *.pyc
+
+# Local benchmark datasets
+bench/*.tar
+bench/*.tar.gz
+bench/*.zip

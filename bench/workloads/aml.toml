@@ -23,6 +23,15 @@ warmup = 30
 timeout_seconds = 30
 app_port = 8080
 
+[scientific_score]
+description = "AML equal-operation transaction throughput. Control and metadata endpoints are excluded from the primary metric."
+include_cases = [
+  "node_summary",
+  "expand_person",
+  "expand_account_flow_hub",
+  "shortest_path_depth4"
+]
+
 [seeds]
 party_rk = "BENCH_PARTY_0000001"
 target_party_rk = "BENCH_PARTY_0000004"

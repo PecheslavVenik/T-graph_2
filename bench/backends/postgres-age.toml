@@ -18,6 +18,8 @@ start = "./mvnw spring-boot:run -Dspring-boot.run.profiles=local"
 [services]
 compose = ["postgres-age"]
 startup_grace_seconds = 12
+reset_before_start = true
+reset_volumes = ["graph_api_postgres_age_data"]
 
 [env]
 SPRING_DATASOURCE_URL = "jdbc:duckdb:${db_path}"

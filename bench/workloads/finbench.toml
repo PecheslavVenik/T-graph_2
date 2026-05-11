@@ -1,0 +1,171 @@
+name = "ldbc-finbench-transaction-adapted"
+version = "1"
+description = "Runnable LDBC FinBench transaction-inspired workload mapped to the graph-api universal graph API."
+default_backends = ["duckpgq", "neo4j", "memgraph", "postgres-age", "arangodb", "janusgraph", "kuzu"]
+default_cases = [
+  "health",
+  "dictionary",
+  "finbench_node_summary",
+  "finbench_person_expand",
+  "finbench_account_flow_hub",
+  "finbench_shortest_guarantee_path"
+]
+
+[dataset]
+generator = "./scripts/finbench-data.sh"
+db_path = "data/finbench_sf1.duckdb"
+scale = "sf1"
+seed_file = "target/bench-seeds/finbench.json"
+
+[runner]
+requests = 300
+concurrency = 8
+warmup = 30
+timeout_seconds = 30
+app_port = 8080
+
+[scientific_score]
+description = "FinBench-adapted equal-operation transaction throughput. Control and metadata endpoints are excluded from the primary metric."
+include_cases = [
+  "finbench_node_summary",
+  "finbench_person_expand",
+  "finbench_account_flow_hub",
+  "finbench_shortest_guarantee_path"
+]
+
+[seeds]
+party_rk = "FINBENCH_PARTY_0000001"
+target_party_rk = "FINBENCH_PARTY_0000004"
+account_no = "FINBENCH_ACCOUNT_HUB_0000001"
+node_id = "FB_PERSON_SEED_FROM_DATASET"
+path_relation_family = "PERSON_GUARANTEE_PERSON"
+
+[startup_slo]
+weight = 0.10
+ideal_seconds = 45
+good_seconds = 120
+acceptable_seconds = 420
+
+[score_profiles.interactive_default]
+description = "Default AML analyst workflow: interactive expand and path queries dominate the decision."
+startup_weight = 0.10
+
+[score_profiles.interactive_default.case_weights]
+dictionary = 0.05
+finbench_node_summary = 0.15
+finbench_person_expand = 0.25
+finbench_account_flow_hub = 0.25
+finbench_shortest_guarantee_path = 0.30
+
+[score_profiles.ops_pragmatic]
+description = "Production operations profile: startup/projection sync matters more."
+startup_weight = 0.25
+
+[score_profiles.ops_pragmatic.case_weights]
+dictionary = 0.05
+finbench_node_summary = 0.10
+finbench_person_expand = 0.25
+finbench_account_flow_hub = 0.25
+finbench_shortest_guarantee_path = 0.20
+
+[score_profiles.path_heavy]
+description = "Investigation profile where explainable relationship paths are the main product value."
+startup_weight = 0.10
+
+[score_profiles.path_heavy.case_weights]
+dictionary = 0.05
+finbench_node_summary = 0.10
+finbench_person_expand = 0.20
+finbench_account_flow_hub = 0.20
+finbench_shortest_guarantee_path = 0.45
+
+[case.health]
+title = "HTTP health"
+method = "GET"
+path = "/actuator/health"
+benchmark_family = "control"
+weight = 0.00
+ideal_p95_ms = 10
+good_p95_ms = 25
+acceptable_p95_ms = 100
+
+[case.dictionary]
+title = "Dictionary metadata"
+method = "GET"
+path = "/api/v1/graph/dictionary"
+benchmark_family = "control metadata lookup"
+weight = 0.05
+ideal_p95_ms = 20
+good_p95_ms = 40
+acceptable_p95_ms = 100
+
+[case.finbench_node_summary]
+title = "FinBench node summary"
+method = "GET"
+path = "/api/v1/graph/node-summary?nodeId=${node_id}"
+benchmark_family = "LDBC FinBench Transaction Workload inspired: neighborhood read"
+weight = 0.15
+ideal_p95_ms = 50
+good_p95_ms = 100
+acceptable_p95_ms = 250
+
+[case.finbench_person_expand]
+title = "FinBench person guarantee expansion"
+method = "POST"
+path = "/api/v1/graph/expand"
+benchmark_family = "LDBC FinBench Transaction Workload inspired: person neighborhood expansion"
+weight = 0.25
+ideal_p95_ms = 120
+good_p95_ms = 250
+acceptable_p95_ms = 650
+body = """
+{
+  "seeds": [{"type": "PARTY_RK", "value": "${party_rk}"}],
+  "relationFamily": "PERSON_GUARANTEE_PERSON",
+  "direction": "OUTBOUND",
+  "maxNeighborsPerSeed": 25,
+  "maxNodes": 150,
+  "maxEdges": 150,
+  "includeAttributes": true
+}
+"""
+
+[case.finbench_account_flow_hub]
+title = "FinBench account transfer hub expansion"
+method = "POST"
+path = "/api/v1/graph/expand"
+benchmark_family = "LDBC FinBench Transaction Workload inspired: account transfer neighborhood"
+weight = 0.25
+ideal_p95_ms = 220
+good_p95_ms = 450
+acceptable_p95_ms = 1200
+body = """
+{
+  "seeds": [{"type": "ACCOUNT_NO", "value": "${account_no}"}],
+  "relationFamily": "ACCOUNT_FLOW",
+  "direction": "OUTBOUND",
+  "maxNeighborsPerSeed": 25,
+  "maxNodes": 150,
+  "maxEdges": 150,
+  "includeAttributes": true
+}
+"""
+
+[case.finbench_shortest_guarantee_path]
+title = "FinBench shortest guarantee path, depth <= 4"
+method = "POST"
+path = "/api/v1/graph/shortest-path"
+benchmark_family = "LDBC FinBench path filtering / traversal inspired"
+weight = 0.30
+ideal_p95_ms = 300
+good_p95_ms = 650
+acceptable_p95_ms = 1500
+body = """
+{
+  "source": {"type": "PARTY_RK", "value": "${party_rk}"},
+  "target": {"type": "PARTY_RK", "value": "${target_party_rk}"},
+  "relationFamily": "${path_relation_family}",
+  "direction": "OUTBOUND",
+  "maxDepth": 4
+}
+"""

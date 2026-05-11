@@ -84,6 +84,46 @@ paths:
                 $ref: '#/components/schemas/GraphNodeSummaryResponse'
         '404':
           description: Node not found
+  /graph/nodes/search:
+    get:
+      summary: Search graph nodes by name, identifier or attribute text
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: nodeType
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Optional node type filter, e.g. PERSON, ACCOUNT or COMPANY.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: includeAttributes
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Matching graph nodes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphNodeSearchResponse'
+        '400':
+          description: Invalid search query or limit
   /graph/export:
     post:
       summary: Export rendered graph as JSON, CSV or NDJSON
@@ -237,6 +277,33 @@ components:
             $ref: '#/components/schemas/GraphFacetCount'
         expandPreview:
           $ref: '#/components/schemas/GraphExpandPreview'
+    GraphNodeSearchResponse:
+      type: object
+      required: [nodes, meta]
+      properties:
+        nodes:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/GraphNode'
+        meta:
+          $ref: '#/components/schemas/GraphNodeSearchMeta'
+    GraphNodeSearchMeta:
+      type: object
+      required: [query, limit, returnedNodeCount, truncated]
+      properties:
+        query:
+          type: string
+        nodeType:
+          type:
+            - string
+            - 'null'
+        limit:
+          type: integer
+        returnedNodeCount:
+          type: integer
+        truncated:
+          type: boolean
     GraphDictionaryResponse:
       type: object
       required: [edgeTypes, relationFamilies, nodeTypes, nodeStatuses, styleHints]

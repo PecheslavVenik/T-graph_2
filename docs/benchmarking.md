@@ -8,9 +8,9 @@ Benchmark layer состоит из трех частей:
 
 | слой | где лежит | что делает |
 | --- | --- | --- |
-| Workload | `bench/workloads/*.toml` | Описывает датасет, seed-ы, HTTP cases, веса и SLO. |
+| Workload | `bench/workloads/*.toml` | Описывает датасет, seed-ы, HTTP cases, scientific included cases, веса и SLO для secondary decision score. |
 | Backend | `bench/backends/*.toml` | Описывает как поднять конкретную СУБД/backend и какие env дать приложению. |
-| Runner | `scripts/bench-runner.py` | Готовит данные, стартует backend, прогревает, меряет, считает score, пишет отчеты. |
+| Runner | `scripts/bench-runner.py` | Готовит данные, стартует backend, прогревает, меряет, считает scientific throughput и secondary decision score, пишет отчеты. |
 
 Главный принцип: новый backend добавляется новым TOML-файлом и реализацией `GraphQueryBackend` в приложении. Workload при этом не меняется.
 
@@ -108,13 +108,28 @@ make bench-data
 
 Если нужна строго научная/публикуемая цифра, добавляйте отдельный workload с официальным датасетом и driver-ом. Этот стенд оставляет тот же runner и backend configs, меняется только `bench/workloads/<name>.toml` и генератор/импортер данных.
 
-## Score
+## Scientific Ranking And Score
+
+Подробная методология вынесена в `docs/benchmark-scoring.md`.
+
+Primary ranking теперь строится по `scientific_ops_per_second`: это throughput на заранее объявленных transaction cases после validity gate. Эта метрика не использует веса, SLO и startup penalty, поэтому ее нельзя подкрутить под DuckDB или другую конкретную СУБД.
+
+`scientific_score` - только нормализация внутри одного прогона: `100 * backend_ops_per_second / best_ops_per_second`.
+
+`decision_score` - вторичная инженерная оценка для выбора под production API. Она использует p95/SLO/weights и поэтому должна трактоваться как subjective utility score, а не как научный benchmark score.
 
 Каждый case имеет:
 
-- `weight` - вклад в итоговый score.
-- `ideal_p95_ms`, `good_p95_ms`, `acceptable_p95_ms` - границы p95.
+- `weight` - вклад в secondary `decision_score`.
+- `ideal_p95_ms`, `good_p95_ms`, `acceptable_p95_ms` - границы p95 для secondary `decision_score`.
 - `benchmark_family` - почему этот case есть в сравнении.
+
+Workload также может иметь `[scientific_score]`:
+
+- `include_cases` - cases, которые входят в primary throughput metric;
+- `description` - почему выбран именно этот transaction set.
+
+Объективные факты benchmark-а - это `scientific_ops_per_second`, `p50_ms`, `p95_ms`, `p99_ms`, `rps`, `errors`, `startup_seconds` и raw CSV samples. `decision_score` нужен только как decision aid поверх этих фактов.
 
 Startup/projection sync считается отдельным SLO через `[startup_slo]`. Это важно: например, Neo4j может быстро отвечать после импорта, но дорогой startup sync тоже является частью стоимости технологии.
 
@@ -124,6 +139,8 @@ Hard guardrails:
 - `p99` выше `2.5x p95` считается признаком нестабильности и штрафуется.
 - Startup OOM/failure = backend не прошел workload на этом масштабе.
 - Сравнивать надо одинаковый workload, одинаковый датасет, одинаковые лимиты API.
+
+Для проверки субъективности workload может содержать `[score_profiles]`. Runner пересчитывает secondary `decision_score` с альтернативными весами без нового прогона и показывает, меняется ли продуктовый лидер при других разумных приоритетах.
 
 ## Как добавить новую СУБД
 

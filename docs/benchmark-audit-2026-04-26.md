@@ -61,16 +61,45 @@ Backend'ы в этом прогоне:
 
 ## Откуда взяты идеи benchmark cases
 
-Это не официальный сертифицированный прогон LDBC/GAP/Graph500/LinkBench. Это domain workload, вдохновленный известными benchmark families и адаптированный под реальные API операции проекта.
+Главный готовый benchmark, на который нужно ссылаться в исследовательском обосновании, - **LDBC Financial Benchmark (FinBench)**.
+
+Почему именно он:
+
+- FinBench официально описан Graph Data Council / LDBC как graph database benchmark для финансовых сценариев, включая anti-fraud и risk control: <https://ldbcouncil.org/benchmarks/finbench/>.
+- У него есть Transaction Workload: OLTP-сценарий со сложными read queries по окружению узла и write queries, которые вставляют/удаляют данные в графе.
+- У него есть полный набор артефактов: specification, VLDB paper, datasets, data generator, driver, reference implementations и ACID tests.
+- По предметной области он ближе к этому проекту, чем классический social-network-only benchmark: AML/fraud investigation, account flows, path filters и neighborhood access.
+
+Практически правильная формулировка для отчета:
+
+> Workload проекта является domain-specific AML investigation workload, спроектированным как FinBench-inspired interactive transaction workload и дополненным идеями из LDBC SNB Interactive, Graphalytics/GAP traversal workloads и LinkBench high-degree graph serving workload.
+
+Это не официальный сертифицированный прогон LDBC FinBench. Это domain workload проекта, который опирается на готовые benchmark suites и адаптирует их к реальным API операциям системы.
+
+## Готовые benchmark suites для ссылки
+
+| Benchmark | Что это | Почему релевантен | Как используем в этом проекте |
+|---|---|---|---|
+| [LDBC FinBench](https://ldbcouncil.org/benchmarks/finbench/) | Финансовый graph database benchmark для anti-fraud/risk control. | Лучшее совпадение с AML/финансовым graph investigation. | Основной источник обоснования workload: account flows, neighborhood reads, path-oriented transaction workload. |
+| [FinBench VLDB 2025 paper](https://ldbcouncil.org/resources/publications/finbench-vldb-2025/) | Научная публикация `The LDBC Financial Benchmark: Transaction Workload`, Proc. VLDB Endow., 2025. | Ссылка для академического обоснования, почему финансовые графы отличаются от social graphs. | Цитировать в исследовательской части как основной paper. |
+| [FinBench Driver](https://github.com/ldbc/ldbc_finbench_driver) | Готовый Java driver для FinBench. | Показывает, что есть исполняемый benchmark framework, а не только paper. | Можно позже сделать отдельный integration path или сверять наш runner с driver modes: validation/benchmark/warmup/concurrency. |
+| [FinBench Reference Implementations](https://github.com/ldbc/ldbc_finbench_transaction_impls) | Reference implementations для transaction workload. | Дает основу для cross-validation и понимания query patterns. | Использовать как источник query family и validation discipline. |
+| [FinBench Datasets](https://ldbcouncil.org/benchmarks/finbench/datasets/) | Готовые datasets SF0.01-SF10. | Можно воспроизводимо прогонять не только на нашем synthetic AML dataset. | Хороший следующий шаг: добавить importer/mapping хотя бы для SF0.01/SF0.1. |
+| [LDBC SNB Interactive](https://ldbcouncil.org/benchmarks/snb/interactive/) | Transactional graph workload с complex reads по neighborhood и update stream. | Старый и узнаваемый industry-standard benchmark для interactive graph DB. | Обосновывает `node_summary`, `expand_person`, latency/throughput подход. |
+| [SNB Interactive reference implementations](https://github.com/ldbc/ldbc_snb_interactive_v1_impls) | Готовые реализации SNB Interactive v1 для Neo4j, PostgreSQL, GraphDB и др. | Есть driver modes, validation, benchmark mode, pre-generated datasets. | Хороший шаблон для более строгой validation процедуры. |
+| [LDBC Graphalytics](https://ldbcouncil.org/benchmarks/graphalytics/) | Industrial-grade benchmark для graph analytics platforms с core algorithms и reference outputs. | Полезен для BFS/path/algorithmic части, но он больше analytics, чем interactive API. | Использовать как вторичное обоснование traversal/path cases, не как главный benchmark. |
+| [LinkBench](https://github.com/facebookarchive/linkbench) | Facebook graph-serving benchmark. | Полезен как ссылка на high-degree graph serving, hot/cold access и social-graph storage workload. | Обосновывает `expand_account_flow_hub` и high-degree traversal pressure. |
+
+Итого: **основная ссылка - LDBC FinBench**, вторичные ссылки - **LDBC SNB Interactive** для interactive graph transaction workload, **Graphalytics/GAP-style traversal** для BFS/path logic, **LinkBench** для graph-serving/high-degree access patterns.
 
 | Case | Endpoint | Benchmark family | Почему подходит |
 |---|---|---|---|
 | `health` | `GET /actuator/health` | control | Контроль живости приложения. В итоговый score не входит. |
 | `dictionary` | `GET /api/v1/graph/dictionary` | domain metadata lookup | Проверяет metadata/read path и базовый overhead приложения. |
-| `node_summary` | `GET /api/v1/graph/node-summary` | LDBC SNB Interactive inspired | One-hop read вокруг выбранной вершины. |
-| `expand_person` | `POST /api/v1/graph/expand` | LDBC SNB Interactive / Graph500 BFS inspired | Интерактивное раскрытие окружения person node. |
-| `expand_account_flow_hub` | `POST /api/v1/graph/expand` | LinkBench / high-degree traversal inspired | Раскрытие account-flow hub, ближе к AML investigative workload. |
-| `shortest_path_depth4` | `POST /api/v1/graph/shortest-path` | GAP Benchmark Suite / Graph500 traversal inspired | Depth-limited path search, самый важный traversal stress case. |
+| `node_summary` | `GET /api/v1/graph/node-summary` | FinBench / LDBC SNB Interactive inspired | One-hop read вокруг выбранной вершины. |
+| `expand_person` | `POST /api/v1/graph/expand` | FinBench / LDBC SNB Interactive / BFS inspired | Интерактивное раскрытие окружения person node. |
+| `expand_account_flow_hub` | `POST /api/v1/graph/expand` | FinBench / LinkBench / high-degree traversal inspired | Раскрытие account-flow hub, ближе к AML investigative workload. |
+| `shortest_path_depth4` | `POST /api/v1/graph/shortest-path` | FinBench path filtering / GAP / Graphalytics inspired | Depth-limited path search, самый важный traversal stress case. |
 
 Почему так правильно для этого проекта: пользовательская задача здесь не "считать PageRank на гигантском графе", а интерактивно исследовать AML-граф через API. Поэтому latency p95 на expand/summary/shortest-path важнее, чем batch throughput на алгоритмах общего назначения.
 
@@ -159,6 +188,8 @@ Startup SLO:
 ## Case SLO и веса
 
 Итоговый score - weighted average по startup и case scores. `health` нужен для контроля, но в итоговый score не входит.
+
+Важно: этот historical report использовал старый итоговый weighted score как главный рейтинг. В новой методологии такой score называется `decision_score` и является только secondary metric. Primary research ranking должен строиться по `scientific_ops_per_second`: throughput на заранее объявленных transaction cases после validity gate. Общая методология зафиксирована в `docs/benchmark-scoring.md`.
 
 | Case | Weight | Ideal p95 | Good p95 | Acceptable p95 |
 |---|---:|---:|---:|---:|

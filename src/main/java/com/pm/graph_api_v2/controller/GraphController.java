@@ -6,6 +6,7 @@ import com.pm.graph_api_v2.dto.GraphExpandRequest;
 import com.pm.graph_api_v2.dto.GraphExpandResponse;
 import com.pm.graph_api_v2.dto.GraphExportFormat;
 import com.pm.graph_api_v2.dto.GraphExportRequest;
+import com.pm.graph_api_v2.dto.GraphNodeSearchResponse;
 import com.pm.graph_api_v2.dto.GraphNodeSummaryResponse;
 import com.pm.graph_api_v2.dto.ShortestPathRequest;
 import com.pm.graph_api_v2.dto.ShortestPathResponse;
@@ -55,6 +56,14 @@ public class GraphController {
                                                 @RequestParam(required = false) String relationFamily,
                                                 @RequestParam(defaultValue = "BOTH") Direction direction) {
         return investigationService.nodeSummary(nodeId, relationFamily, direction);
+    }
+
+    @GetMapping("/nodes/search")
+    public GraphNodeSearchResponse searchNodes(@RequestParam String query,
+                                               @RequestParam(required = false) String nodeType,
+                                               @RequestParam(defaultValue = "20") int limit,
+                                               @RequestParam(defaultValue = "true") boolean includeAttributes) {
+        return investigationService.searchNodes(query, nodeType, limit, includeAttributes);
     }
 
     @PostMapping("/export")

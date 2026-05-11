@@ -80,7 +80,7 @@ services:
     environment:
       JANUS_STORAGE_TIMEOUT: ""
       JAVA_OPTIONS_FILE: /dev/null
-      JAVA_OPTIONS: "-Xms128m -Xmx768m -XX:+UseG1GC -Xss256k -Dgremlin.io.kryoShimService=org.janusgraph.hadoop.serialize.JanusGraphKryoShimService"
+      JAVA_OPTIONS: "-Xms256m -Xmx1g -XX:+UseG1GC -Xss256k -Dgremlin.io.kryoShimService=org.janusgraph.hadoop.serialize.JanusGraphKryoShimService"
       gremlinserver.evaluationTimeout: "120000"
     ports:
       - "8182:8182"

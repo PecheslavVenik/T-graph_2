@@ -15,6 +15,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -88,6 +89,64 @@ public class GraphRepository {
             return Optional.empty();
         }
         return Optional.of(rows.get(0));
+    }
+
+    public List<NodeRow> searchNodes(String query, String nodeType, int limit) {
+        String normalizedQuery = query.trim().toLowerCase(Locale.ROOT);
+        String exactQuery = normalizedQuery;
+        String prefixPattern = escapeLike(normalizedQuery) + "%";
+        String containsPattern = "%" + escapeLike(normalizedQuery) + "%";
+        String nodeTypeFilter = nodeType == null ? "" : nodeType.trim().toUpperCase(Locale.ROOT);
+
+        String searchableFields = """
+            LOWER(COALESCE(n.node_id, '')),
+            LOWER(COALESCE(n.display_name, '')),
+            LOWER(COALESCE(n.party_rk, '')),
+            LOWER(COALESCE(n.person_id, '')),
+            LOWER(COALESCE(n.phone_no, '')),
+            LOWER(COALESCE(n.full_name, '')),
+            LOWER(COALESCE(n.employer, '')),
+            LOWER(COALESCE(n.city, '')),
+            LOWER(COALESCE(n.source_system, '')),
+            LOWER(COALESCE(n.attrs_json, '')),
+            LOWER(COALESCE(i.id_type, '')),
+            LOWER(COALESCE(i.id_value, ''))
+            """;
+        String exactMatch = anyField(searchableFields, "= ?");
+        String prefixMatch = anyField(searchableFields, "LIKE ? ESCAPE '\\'");
+        String containsMatch = anyField(searchableFields, "LIKE ? ESCAPE '\\'");
+
+        String sql = """
+            SELECT matched.node_id
+            FROM (
+                SELECT
+                    n.node_id,
+                    MIN(CASE
+                        WHEN %s THEN 0
+                        WHEN %s THEN 1
+                        ELSE 2
+                    END) AS match_rank,
+                    MIN(LOWER(COALESCE(n.display_name, n.full_name, n.node_id))) AS sort_name
+                FROM g_nodes n
+                LEFT JOIN g_identifiers i ON i.node_id = n.node_id
+                WHERE (? = '' OR UPPER(COALESCE(n.node_type, '')) = ?)
+                  AND (%s)
+                GROUP BY n.node_id
+            ) matched
+            ORDER BY matched.match_rank, matched.sort_name, matched.node_id
+            LIMIT ?
+            """.formatted(exactMatch, prefixMatch, containsMatch);
+
+        List<Object> params = new ArrayList<>();
+        addRepeated(params, exactQuery, fieldCount(searchableFields));
+        addRepeated(params, prefixPattern, fieldCount(searchableFields));
+        params.add(nodeTypeFilter);
+        params.add(nodeTypeFilter);
+        addRepeated(params, containsPattern, fieldCount(searchableFields));
+        params.add(limit);
+
+        List<String> nodeIds = jdbcTemplate.query(sql, (rs, rowNum) -> rs.getString("node_id"), params.toArray());
+        return findNodesByIdsInOrder(nodeIds);
     }
 
     public List<NodeRow> findAllNodes() {
@@ -260,6 +319,35 @@ public class GraphRepository {
     private Boolean queryExists(String sql) {
         List<Integer> rows = jdbcTemplate.query(sql, (rs, rowNum) -> 1);
         return !rows.isEmpty();
+    }
+
+    private String anyField(String fields, String operator) {
+        return fields.lines()
+            .map(String::trim)
+            .filter(field -> !field.isBlank())
+            .map(field -> field.replaceAll(",$", "") + " " + operator)
+            .reduce((left, right) -> left + " OR " + right)
+            .orElse("FALSE");
+    }
+
+    private int fieldCount(String fields) {
+        return (int) fields.lines()
+            .map(String::trim)
+            .filter(field -> !field.isBlank())
+            .count();
+    }
+
+    private void addRepeated(List<Object> params, String value, int count) {
+        for (int index = 0; index < count; index++) {
+            params.add(value);
+        }
+    }
+
+    private String escapeLike(String value) {
+        return value
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_");
     }
 
 }

@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class JanusGraphRuntimeManager {
 
     private static final Logger log = LoggerFactory.getLogger(JanusGraphRuntimeManager.class);
-    private static final int SYNC_BATCH_SIZE = 250;
+    private static final int SYNC_BATCH_SIZE = 100;
     private static final long CONNECTIVITY_TIMEOUT_MILLIS = 180_000;
     private static final long CONNECTIVITY_RETRY_MILLIS = 5_000;
     private static final String NODE_ID_INDEX = "graphNodeByNodeId";

@@ -1,11 +1,13 @@
 package com.pm.graph_api_v2.repository;
 
+import com.pm.graph_api_v2.config.JanusGraphProperties;
 import com.pm.graph_api_v2.dto.Direction;
 import com.pm.graph_api_v2.dto.GraphSource;
 import com.pm.graph_api_v2.repository.model.EdgeRow;
 import com.pm.graph_api_v2.repository.model.PathRow;
 import com.pm.graph_api_v2.util.GraphRelationFamilies;
 import org.apache.tinkerpop.gremlin.driver.Client;
+import org.apache.tinkerpop.gremlin.driver.RequestOptions;
 import org.apache.tinkerpop.gremlin.driver.Result;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Repository;
@@ -15,15 +17,22 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 @Repository
 @ConditionalOnProperty(name = "graph.query-backend", havingValue = "JANUSGRAPH")
 public class JanusGraphQueryBackend implements GraphQueryBackend {
 
     private final Client client;
+    private final JanusGraphProperties properties;
+    private final Semaphore queryPermits;
 
-    public JanusGraphQueryBackend(Client client) {
+    public JanusGraphQueryBackend(Client client, JanusGraphProperties properties) {
         this.client = client;
+        this.properties = properties;
+        this.queryPermits = new Semaphore(Math.max(1, properties.getMaxConcurrentQueries()));
     }
 
     @Override
@@ -56,7 +65,7 @@ public class JanusGraphQueryBackend implements GraphQueryBackend {
             """;
 
         try {
-            List<Result> results = client.submit(script, Map.of(
+            List<Result> results = submitQuery(script, Map.of(
                 "seedNodeId", seeds.getFirst(),
                 "seedNodeIds", seeds,
                 "projectionOwner", Neo4jProjectionSupport.PROJECTION_OWNER,
@@ -64,7 +73,7 @@ public class JanusGraphQueryBackend implements GraphQueryBackend {
                 "relationFamily", GraphRelationFamilies.normalize(relationFamily),
                 "edgeTypes", edgeTypes == null ? List.of() : List.copyOf(edgeTypes),
                 "candidateLimit", Math.max(1, candidateLimit)
-            )).all().get();
+            ));
             if (results.isEmpty()) {
                 return List.of();
             }
@@ -139,7 +148,7 @@ public class JanusGraphQueryBackend implements GraphQueryBackend {
             """.formatted(shortestPathEdgeStep(direction), shortestPathNextNodeStatement(direction));
 
         try {
-            List<Result> results = client.submit(script, Map.of(
+            List<Result> results = submitQuery(script, Map.of(
                 "sourceNodeId", sourceNodeId,
                 "targetNodeId", targetNodeId,
                 "projectionOwner", Neo4jProjectionSupport.PROJECTION_OWNER,
@@ -147,7 +156,7 @@ public class JanusGraphQueryBackend implements GraphQueryBackend {
                 "relationFamily", GraphRelationFamilies.normalize(relationFamily),
                 "maxDepth", Math.max(1, maxDepth),
                 "candidateLimit", 10_000
-            )).all().get();
+            ));
             if (results.isEmpty() || !(results.get(0).getObject() instanceof Map<?, ?> row)) {
                 return Optional.empty();
             }
@@ -159,6 +168,27 @@ public class JanusGraphQueryBackend implements GraphQueryBackend {
             return Optional.of(new PathRow(nodeIds, edgeIds, edgeIds.size()));
         } catch (Exception ex) {
             throw new IllegalStateException("JanusGraph shortest-path query failed", ex);
+        }
+    }
+
+    private List<Result> submitQuery(String script, Map<String, Object> bindings) throws Exception {
+        boolean acquired = queryPermits.tryAcquire(
+            Math.max(1, properties.getQueryPermitTimeoutMillis()),
+            TimeUnit.MILLISECONDS
+        );
+        if (!acquired) {
+            throw new TimeoutException("Timed out waiting for a JanusGraph query permit");
+        }
+
+        try {
+            RequestOptions.Builder options = RequestOptions.build()
+                .timeout(Math.max(1, properties.getRequestTimeoutMillis()))
+                .batchSize(Math.max(1, properties.getResultBatchSize()));
+            bindings.forEach(options::addParameter);
+            long clientWaitMillis = Math.max(1, properties.getRequestTimeoutMillis()) + 5_000L;
+            return client.submit(script, options.create()).all().get(clientWaitMillis, TimeUnit.MILLISECONDS);
+        } finally {
+            queryPermits.release();
         }
     }
 

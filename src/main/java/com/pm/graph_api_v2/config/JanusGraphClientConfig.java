@@ -15,6 +15,12 @@ public class JanusGraphClientConfig {
         return Cluster.build()
             .addContactPoint(properties.getHost())
             .port(properties.getPort())
+            .minConnectionPoolSize(properties.getMinConnectionPoolSize())
+            .maxConnectionPoolSize(properties.getMaxConnectionPoolSize())
+            .maxInProcessPerConnection(properties.getMaxInProcessPerConnection())
+            .maxWaitForConnection(properties.getMaxWaitForConnectionMillis())
+            .connectionSetupTimeoutMillis(properties.getConnectionSetupTimeoutMillis())
+            .resultIterationBatchSize(properties.getResultBatchSize())
             .create();
     }
 

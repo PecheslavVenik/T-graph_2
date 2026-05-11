@@ -87,42 +87,14 @@ public class DuckPgqGraphQueryRepository implements GraphQueryBackend {
                                               String relationFamily,
                                               Direction direction,
                                               int maxDepth) {
-        return jdbcTemplate.execute((ConnectionCallback<Optional<PathRow>>) connection -> {
-            if (!GraphRelationFamilies.isAllRelations(relationFamily) && !relationFamilyExists(connection, relationFamily)) {
-                return Optional.empty();
-            }
-
-            String projectionTable = GraphRelationFamilies.projectionTableName(relationFamily);
-            String sql = DuckPgqQueryBuilder.buildShortestPathQuery(
-                GraphRelationFamilies.graphName(relationFamily),
-                VERTEX_LABEL,
-                EDGE_LABEL,
-                sourceNodeId,
-                targetNodeId,
-                direction
-            );
-
-            try (Statement statement = connection.createStatement();
-                 ResultSet rs = statement.executeQuery(sql)) {
-                if (!rs.next()) {
-                    return Optional.empty();
-                }
-
-                int hopCount = resultSupport.asInt(rs.getObject("hop_count"));
-                if (hopCount > Math.max(1, maxDepth)) {
-                    return Optional.empty();
-                }
-
-                List<Long> nodeRowIds = resultSupport.parseLongList(rs.getObject("vertices_rowid"));
-                List<Long> edgeRowIds = resultSupport.parseLongList(rs.getObject("edges_rowid"));
-                List<String> nodeIds = resultSupport.resolveNodeIdsByRowId(connection, nodeRowIds);
-                List<String> edgeIds = resultSupport.resolveEdgeIdsByRowId(connection, projectionTable, edgeRowIds);
-                if (nodeIds.isEmpty()) {
-                    return Optional.empty();
-                }
-                return Optional.of(new PathRow(nodeIds, edgeIds, hopCount));
-            }
-        });
+        return GraphBackendPathSearch.breadthFirst(
+            sourceNodeId,
+            targetNodeId,
+            relationFamily,
+            direction,
+            maxDepth,
+            this::findExpandEdges
+        );
     }
 
     private boolean relationFamilyExists(Connection connection, String relationFamily) throws SQLException {

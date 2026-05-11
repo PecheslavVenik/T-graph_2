@@ -12,6 +12,8 @@ import com.pm.graph_api_v2.dto.GraphExportFormat;
 import com.pm.graph_api_v2.dto.GraphExportRequest;
 import com.pm.graph_api_v2.dto.GraphMetaDto;
 import com.pm.graph_api_v2.dto.GraphNodeDto;
+import com.pm.graph_api_v2.dto.GraphNodeSearchMetaDto;
+import com.pm.graph_api_v2.dto.GraphNodeSearchResponse;
 import com.pm.graph_api_v2.dto.GraphNodeSummaryDto;
 import com.pm.graph_api_v2.dto.GraphNodeSummaryResponse;
 import com.pm.graph_api_v2.dto.PathDto;
@@ -40,6 +42,9 @@ import java.util.concurrent.TimeUnit;
 
 @Service
 public class InvestigationService {
+
+    private static final int DEFAULT_NODE_SEARCH_LIMIT = 20;
+    private static final int MAX_NODE_SEARCH_LIMIT = 100;
 
     private final GraphRepository graphRepository;
     private final GraphQueryBackend graphQueryBackend;
@@ -238,6 +243,40 @@ public class InvestigationService {
         );
     }
 
+    public GraphNodeSearchResponse searchNodes(String query,
+                                               String nodeType,
+                                               int limit,
+                                               boolean includeAttributes) {
+        String normalizedQuery = normalizeSearchQuery(query);
+        String normalizedNodeType = normalizeNodeType(nodeType);
+        int effectiveLimit = normalizeSearchLimit(limit);
+
+        Timer.Sample sample = graphMetrics.startTimer();
+        try {
+            List<NodeRow> rows = graphRepository.searchNodes(normalizedQuery, normalizedNodeType, effectiveLimit + 1);
+            boolean truncated = rows.size() > effectiveLimit;
+            List<GraphNodeDto> nodes = rows.stream()
+                .limit(effectiveLimit)
+                .map(row -> graphDtoMapper.toNodeDto(row, includeAttributes))
+                .toList();
+
+            graphMetrics.recordNodeCount(nodes.size());
+
+            return new GraphNodeSearchResponse(
+                nodes,
+                new GraphNodeSearchMetaDto(
+                    normalizedQuery,
+                    normalizedNodeType,
+                    effectiveLimit,
+                    nodes.size(),
+                    truncated
+                )
+            );
+        } finally {
+            graphMetrics.stopTimer(sample, "node_search");
+        }
+    }
+
     public ExportedGraph export(GraphExportRequest request, GraphExportFormat format) {
         return graphExportService.export(request, format);
     }
@@ -280,6 +319,32 @@ public class InvestigationService {
         return rows.stream()
             .map(row -> new GraphFacetCountDto(row.key(), row.count()))
             .toList();
+    }
+
+    private String normalizeSearchQuery(String query) {
+        if (query == null || query.trim().isBlank()) {
+            throw new ApiBadRequestException("query must not be blank");
+        }
+        String normalized = query.trim();
+        if (normalized.length() > 256) {
+            throw new ApiBadRequestException("query must be at most 256 characters");
+        }
+        return normalized;
+    }
+
+    private String normalizeNodeType(String nodeType) {
+        if (nodeType == null || nodeType.trim().isBlank()) {
+            return null;
+        }
+        return nodeType.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private int normalizeSearchLimit(Integer limit) {
+        int effectiveLimit = limit == null ? DEFAULT_NODE_SEARCH_LIMIT : limit;
+        if (effectiveLimit < 1 || effectiveLimit > MAX_NODE_SEARCH_LIMIT) {
+            throw new ApiBadRequestException("limit must be between 1 and " + MAX_NODE_SEARCH_LIMIT);
+        }
+        return effectiveLimit;
     }
 
     private int orDefault(Integer value, int fallback) {

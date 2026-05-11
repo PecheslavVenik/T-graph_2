@@ -267,6 +267,58 @@ class GraphControllerIntegrationTest {
     }
 
     @Test
+    void nodeSearch_shouldFindNodeByName() throws Exception {
+        mockMvc.perform(get("/api/v1/graph/nodes/search")
+                .param("query", "alice")
+                .param("nodeType", "person")
+                .param("limit", "5"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.nodes.length()").value(1))
+            .andExpect(jsonPath("$.nodes[0].nodeId").value("N_PARTY_1001"))
+            .andExpect(jsonPath("$.nodes[0].displayName").value("Alice Ivanova"))
+            .andExpect(jsonPath("$.nodes[0].statuses", hasItem("BLACKLIST")))
+            .andExpect(jsonPath("$.meta.query").value("alice"))
+            .andExpect(jsonPath("$.meta.nodeType").value("PERSON"))
+            .andExpect(jsonPath("$.meta.limit").value(5))
+            .andExpect(jsonPath("$.meta.returnedNodeCount").value(1))
+            .andExpect(jsonPath("$.meta.truncated").value(false));
+    }
+
+    @Test
+    void nodeSearch_shouldSearchIdentifiersAndReportTruncation() throws Exception {
+        mockMvc.perform(get("/api/v1/graph/nodes/search")
+                .param("query", "PARTY")
+                .param("nodeType", "PERSON")
+                .param("limit", "1")
+                .param("includeAttributes", "false"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.nodes.length()").value(1))
+            .andExpect(jsonPath("$.nodes[0].nodeType").value("PERSON"))
+            .andExpect(jsonPath("$.nodes[0].identifiers.party_rk", containsString("PARTY_")))
+            .andExpect(jsonPath("$.nodes[0].attributes").isMap())
+            .andExpect(jsonPath("$.nodes[0].attributes", not(hasKey("pagerankScore"))))
+            .andExpect(jsonPath("$.meta.returnedNodeCount").value(1))
+            .andExpect(jsonPath("$.meta.truncated").value(true));
+    }
+
+    @Test
+    void nodeSearch_shouldValidateLimit() throws Exception {
+        mockMvc.perform(get("/api/v1/graph/nodes/search")
+                .param("query", "Alice")
+                .param("limit", "101"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
+    }
+
+    @Test
+    void nodeSearch_shouldValidateQuery() throws Exception {
+        mockMvc.perform(get("/api/v1/graph/nodes/search")
+                .param("query", " "))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
+    }
+
+    @Test
     void expand_shouldIncludeUndirectedEdgeForInboundRequest() throws Exception {
         String payload = """
             {

@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -55,6 +56,13 @@ public class ApiExceptionHandler {
     public ProblemDetail handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
         String message = "Invalid value for parameter: " + ex.getName();
         log.warn("Type mismatch traceId={} parameter={} value={}", traceId(), ex.getName(), ex.getValue());
+        return problem(HttpStatus.BAD_REQUEST, "BAD_REQUEST", message, null);
+    }
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ProblemDetail handleMissingRequestParam(MissingServletRequestParameterException ex) {
+        String message = "Missing required parameter: " + ex.getParameterName();
+        log.warn("Missing request parameter traceId={} parameter={}", traceId(), ex.getParameterName());
         return problem(HttpStatus.BAD_REQUEST, "BAD_REQUEST", message, null);
     }
 

@@ -7,6 +7,7 @@ Stateless REST API для расследовательской графовой 
 ## Что умеет API
 - `POST /api/v1/graph/expand` - умное 1-hop расширение для расследовательского графа с анти-hub ранжированием
 - `POST /api/v1/graph/shortest-path` - кратчайший путь (minimum hops) внутри выбранного relation family
+- `GET /api/v1/graph/nodes/search` - поиск опорной ноды по имени, идентификатору или атрибутам для ручного ресерча
 - `GET /api/v1/graph/dictionary` - справочник типов связей/статусов для легенды фронта
 - `POST /api/v1/graph/export?format=JSON|CSV|NDJSON` - экспорт графа, который фронт уже собрал
 - Стабильные `nodeId`/`edgeId` для merge на фронте
@@ -175,6 +176,11 @@ Node summary for a filtered expand preview:
 curl -s "$BASE/graph/node-summary?nodeId=N_PARTY_1001&relationFamily=CUSTOMER_OWNERSHIP&direction=OUTBOUND"
 ```
 
+Search nodes for a manual anchor/seed:
+```bash
+curl -s "$BASE/graph/nodes/search?query=Alice&nodeType=PERSON&limit=10&includeAttributes=true"
+```
+
 Export NDJSON:
 ```bash
 curl -s -X POST "$BASE/graph/export?format=NDJSON" \
@@ -237,6 +243,7 @@ java -jar app.jar
 
 ## Для фронта и ML-команды
 - Основной merge-friendly формат: `nodes[]`, `edges[]`, `meta`
+- Для ручной опорной ноды фронт может дергать `GET /graph/nodes/search?query=...`, показывать найденные `nodes[]`, а выбранный результат передавать в `expand` как seed `{ "type": "NODE_ID", "value": nodeId }`
 - Перед `expand` можно дергать `GET /graph/node-summary?nodeId=...` и показывать пользователю сводку по клику на узел
 - `node-summary` возвращает общие counts по соседям, разбивку по `relationFamilies`, `edgeTypes`, `neighborNodeTypes` и признак, урежет ли узел дефолтный budget expand-а
 - `nodes[]` теперь могут нести `nodeType` и generic `identifiers`
