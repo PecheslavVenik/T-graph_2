@@ -30,12 +30,15 @@ public class DuckPgqGraphQueryRepository implements GraphQueryBackend {
 
     private final JdbcTemplate jdbcTemplate;
     private final DuckPgqResultSupport resultSupport;
+    private final DuckPgqRuntimeManager runtimeManager;
     private final RowMapper<EdgeRow> edgeRowMapper;
 
     public DuckPgqGraphQueryRepository(JdbcTemplate jdbcTemplate,
-                                       DuckPgqResultSupport resultSupport) {
+                                       DuckPgqResultSupport resultSupport,
+                                       DuckPgqRuntimeManager runtimeManager) {
         this.jdbcTemplate = jdbcTemplate;
         this.resultSupport = resultSupport;
+        this.runtimeManager = runtimeManager;
         this.edgeRowMapper = resultSupport::mapEdgeRow;
     }
 
@@ -55,6 +58,8 @@ public class DuckPgqGraphQueryRepository implements GraphQueryBackend {
         }
 
         return jdbcTemplate.execute((ConnectionCallback<List<EdgeRow>>) connection -> {
+            runtimeManager.ensureGraphQueryReady(connection);
+
             if (!GraphRelationFamilies.isAllRelations(relationFamily) && !relationFamilyExists(connection, relationFamily)) {
                 return List.of();
             }

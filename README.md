@@ -7,6 +7,8 @@ Stateless REST API для расследовательской графовой 
 ## Что умеет API
 - `POST /api/v1/graph/expand` - умное 1-hop расширение для расследовательского графа с анти-hub ранжированием
 - `POST /api/v1/graph/shortest-path` - кратчайший путь (minimum hops) внутри выбранного relation family
+- `POST /api/v1/graph/query` - старт расследования с безопасного read-only SQL-запроса
+- `POST /api/v1/graph/import/preview` и `/import/commit` - импорт CSV с нодами/ребрами в canonical graph
 - `GET /api/v1/graph/nodes/search` - поиск опорной ноды по имени, идентификатору или атрибутам для ручного ресерча
 - `GET /api/v1/graph/dictionary` - справочник типов связей/статусов для легенды фронта
 - `POST /api/v1/graph/export?format=JSON|CSV|NDJSON` - экспорт графа, который фронт уже собрал
@@ -38,7 +40,7 @@ Stateless REST API для расследовательской графовой 
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
-По умолчанию активен `DuckPGQ`. Его можно переключить на `Neo4j` через `GRAPH_QUERY_BACKEND=NEO4J`.
+`local` профиль подключает большую FinBench DuckDB базу `./data/finbench_sf0_1.duckdb` и выключает Flyway, потому что эта база уже предзагружена. По умолчанию активен `DuckPGQ`. Его можно переключить на `Neo4j` через `GRAPH_QUERY_BACKEND=NEO4J`.
 
 ## Быстрый старт (Docker Compose)
 ```bash
@@ -181,6 +183,59 @@ Search nodes for a manual anchor/seed:
 curl -s "$BASE/graph/nodes/search?query=Alice&nodeType=PERSON&limit=10&includeAttributes=true"
 ```
 
+Start investigation from SQL seed query:
+```bash
+curl -s -X POST "$BASE/graph/query" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql":"select node_id from g_nodes where is_blacklist = true",
+    "resultMode":"SEEDS",
+    "relationFamily":"ALL_RELATIONS",
+    "direction":"BOTH",
+    "maxNeighborsPerSeed":25,
+    "maxNodes":200,
+    "maxEdges":300,
+    "includeAttributes":true
+  }'
+```
+
+Return graph slice from SQL edge query:
+```bash
+curl -s -X POST "$BASE/graph/query" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql":"select edge_id from g_edges where tx_sum > 100000",
+    "resultMode":"GRAPH",
+    "maxNodes":200,
+    "maxEdges":300,
+    "includeAttributes":true
+  }'
+```
+
+Import CSV preview:
+```bash
+curl -s -X POST "$BASE/graph/import/preview" \
+  -F "file=@graph-import.csv"
+```
+
+Import CSV commit:
+```bash
+curl -s -X POST "$BASE/graph/import/commit" \
+  -F "file=@graph-import.csv"
+```
+
+Минимальный CSV может содержать и ноды, и связи в одном файле:
+```csv
+record_type,node_id,node_type,display_name,party_rk,account_no,from_node_id,to_node_id,edge_id,edge_type,relation_family,directed
+NODE,N_IMPORT_1,PERSON,Imported Customer,PARTY_IMPORT_1,,,,,,,
+NODE,N_IMPORT_2,ACCOUNT,Imported Account,,40817810000000999999,,,,,,
+EDGE,,,,,,N_IMPORT_1,N_IMPORT_2,E_IMPORT_1,OWNS,CUSTOMER_OWNERSHIP,true
+```
+
+Поддерживаемые node-колонки: `node_id`/`id`, `node_type`/`entity_type`, `display_name`/`name`, `party_rk`, `person_id`, `phone_no`/`phone`, `full_name`, `is_blacklist`, `is_vip`, `employer`, `city`, `source_system`, `pagerank_score`, `hub_score`, `attrs_json`, а также `identifier_*`.
+
+Поддерживаемые edge-колонки: `edge_id`, `from_node_id`/`source`/`from`, `to_node_id`/`target`/`to`, `edge_type`/`type`/`relation`, `relation_family`, `directed`, `tx_count`, `tx_sum`, `strength_score`, `evidence_count`, `source_system`, `first_seen_at`, `last_seen_at`, `attrs_json`.
+
 Export NDJSON:
 ```bash
 curl -s -X POST "$BASE/graph/export?format=NDJSON" \
@@ -244,6 +299,8 @@ java -jar app.jar
 ## Для фронта и ML-команды
 - Основной merge-friendly формат: `nodes[]`, `edges[]`, `meta`
 - Для ручной опорной ноды фронт может дергать `GET /graph/nodes/search?query=...`, показывать найденные `nodes[]`, а выбранный результат передавать в `expand` как seed `{ "type": "NODE_ID", "value": nodeId }`
+- Для сценария `Start from query` фронт может дергать `POST /graph/query`: `SEEDS` ожидает SQL с `node_id` и затем расширяет найденные seed-ноды, `GRAPH` ожидает `node_id`, `edge_id` или `source`/`target` и возвращает готовый срез графа
+- Для сценария `Start from file` фронт загружает CSV в `POST /graph/import/preview`, показывает counts/errors, затем по подтверждению пользователя отправляет тот же файл в `POST /graph/import/commit`
 - Перед `expand` можно дергать `GET /graph/node-summary?nodeId=...` и показывать пользователю сводку по клику на узел
 - `node-summary` возвращает общие counts по соседям, разбивку по `relationFamilies`, `edgeTypes`, `neighborNodeTypes` и признак, урежет ли узел дефолтный budget expand-а
 - `nodes[]` теперь могут нести `nodeType` и generic `identifiers`

@@ -44,6 +44,75 @@ paths:
           description: Path not found
         '503':
           description: DuckPGQ is required but unavailable
+  /graph/query:
+    post:
+      summary: Start an investigation from a read-only SQL query
+      description: >
+        Executes a guarded SELECT/WITH query against canonical graph tables. In SEEDS mode
+        the query must return node ids and the API expands them. In GRAPH mode the query
+        may return node_id, edge_id, or source/target references and the API returns that
+        graph slice without additional expansion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GraphQueryRequest'
+      responses:
+        '200':
+          description: Query-backed investigation graph
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphExpandResponse'
+        '400':
+          description: Invalid or unsafe SQL query
+        '404':
+          description: Query returned no usable graph references
+  /graph/import/preview:
+    post:
+      summary: Parse and validate a CSV graph import file without writing data
+      description: >
+        Accepts one CSV file containing NODE and EDGE rows. Preview returns parsed counts,
+        inferred endpoint nodes, validation errors and sample rows, but does not mutate
+        canonical graph tables.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/GraphImportRequest'
+      responses:
+        '200':
+          description: Import preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphImportResponse'
+        '400':
+          description: Invalid file or CSV format
+  /graph/import/commit:
+    post:
+      summary: Import a CSV graph file into canonical nodes, edges and identifiers
+      description: >
+        Upserts nodes and edges from a CSV file into g_nodes, g_edges and g_identifiers,
+        then refreshes the DuckPGQ projection so imported relations are immediately
+        available to expand/query flows.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/GraphImportRequest'
+      responses:
+        '200':
+          description: Import write result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphImportResponse'
+        '400':
+          description: Invalid file or validation errors
   /graph/dictionary:
     get:
       summary: Get edge/status dictionary for UI legend
@@ -203,6 +272,118 @@ components:
             $ref: '#/components/schemas/GraphEdge'
         meta:
           $ref: '#/components/schemas/GraphMeta'
+    GraphQueryRequest:
+      type: object
+      required: [sql]
+      properties:
+        sql:
+          type: string
+          minLength: 1
+          maxLength: 10000
+          description: Single read-only SELECT/WITH statement over canonical graph tables.
+        resultMode:
+          $ref: '#/components/schemas/GraphQueryResultMode'
+          default: SEEDS
+        relationFamily:
+          $ref: '#/components/schemas/GraphRelationFamily'
+        edgeTypes:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+        direction:
+          $ref: '#/components/schemas/Direction'
+          default: BOTH
+        maxNeighborsPerSeed:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        maxNodes:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        maxEdges:
+          type: integer
+          minimum: 1
+          maximum: 5000
+        includeAttributes:
+          type: boolean
+    GraphQueryResultMode:
+      type: string
+      enum: [SEEDS, GRAPH]
+    GraphImportRequest:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: UTF-8 CSV file, max 10 MiB.
+    GraphImportResponse:
+      type: object
+      required:
+        - fileName
+        - status
+        - parsedNodeCount
+        - parsedEdgeCount
+        - inferredNodeCount
+        - invalidRowCount
+        - insertedNodeCount
+        - updatedNodeCount
+        - insertedEdgeCount
+        - updatedEdgeCount
+        - errors
+        - warnings
+        - sampleRows
+      properties:
+        fileName:
+          type: string
+        status:
+          type: string
+          enum: [PREVIEW, COMMITTED]
+        parsedNodeCount:
+          type: integer
+        parsedEdgeCount:
+          type: integer
+        inferredNodeCount:
+          type: integer
+        invalidRowCount:
+          type: integer
+        insertedNodeCount:
+          type: integer
+        updatedNodeCount:
+          type: integer
+        insertedEdgeCount:
+          type: integer
+        updatedEdgeCount:
+          type: integer
+        errors:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/GraphImportError'
+        warnings:
+          type: array
+          items:
+            type: string
+        sampleRows:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            additionalProperties:
+              type: string
+    GraphImportError:
+      type: object
+      required: [rowNumber, section, message]
+      properties:
+        rowNumber:
+          type: integer
+        section:
+          type: string
+          enum: [ROW, NODE, EDGE]
+        message:
+          type: string
     ShortestPathRequest:
       type: object
       required: [source, target, direction]
@@ -448,7 +629,7 @@ components:
           type: integer
         source:
           type: string
-          enum: [DUCKPGQ, NEO4J]
+          enum: [DUCKPGQ, NEO4J, MEMGRAPH, POSTGRES_AGE, ARANGODB, JANUSGRAPH, KUZU]
         relationFamily:
           $ref: '#/components/schemas/GraphRelationFamily'
         rankingStrategy:

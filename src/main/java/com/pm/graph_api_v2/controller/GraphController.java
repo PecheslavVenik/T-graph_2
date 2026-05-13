@@ -6,8 +6,10 @@ import com.pm.graph_api_v2.dto.GraphExpandRequest;
 import com.pm.graph_api_v2.dto.GraphExpandResponse;
 import com.pm.graph_api_v2.dto.GraphExportFormat;
 import com.pm.graph_api_v2.dto.GraphExportRequest;
+import com.pm.graph_api_v2.dto.GraphImportResponse;
 import com.pm.graph_api_v2.dto.GraphNodeSearchResponse;
 import com.pm.graph_api_v2.dto.GraphNodeSummaryResponse;
+import com.pm.graph_api_v2.dto.GraphQueryRequest;
 import com.pm.graph_api_v2.dto.ShortestPathRequest;
 import com.pm.graph_api_v2.dto.ShortestPathResponse;
 import com.pm.graph_api_v2.service.ExportedGraph;
@@ -16,6 +18,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @Validated
@@ -44,6 +48,21 @@ public class GraphController {
     @PostMapping("/shortest-path")
     public ShortestPathResponse shortestPath(@Valid @RequestBody ShortestPathRequest request) {
         return investigationService.shortestPath(request);
+    }
+
+    @PostMapping("/query")
+    public GraphExpandResponse query(@Valid @RequestBody GraphQueryRequest request) {
+        return investigationService.query(request);
+    }
+
+    @PostMapping(value = "/import/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public GraphImportResponse importPreview(@RequestParam("file") MultipartFile file) {
+        return investigationService.importPreview(file);
+    }
+
+    @PostMapping(value = "/import/commit", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public GraphImportResponse importCommit(@RequestParam("file") MultipartFile file) {
+        return investigationService.importCommit(file);
     }
 
     @GetMapping("/dictionary")

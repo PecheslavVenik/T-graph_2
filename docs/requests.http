@@ -15,6 +15,61 @@ GET {{baseUrl}}/api/v1/graph/node-summary?nodeId=N_PARTY_1001&relationFamily=CUS
 ### Search nodes for manual anchor seed
 GET {{baseUrl}}/api/v1/graph/nodes/search?query=Alice&nodeType=PERSON&limit=10&includeAttributes=true
 
+### Start investigation from SQL seed query
+POST {{baseUrl}}/api/v1/graph/query
+Content-Type: application/json
+
+{
+  "sql": "select node_id from g_nodes where node_id = 'N_PARTY_1001'",
+  "resultMode": "SEEDS",
+  "relationFamily": "CUSTOMER_OWNERSHIP",
+  "direction": "OUTBOUND",
+  "maxNeighborsPerSeed": 10,
+  "maxNodes": 100,
+  "maxEdges": 100,
+  "includeAttributes": true
+}
+
+### Return graph slice from SQL edge query
+POST {{baseUrl}}/api/v1/graph/query
+Content-Type: application/json
+
+{
+  "sql": "select edge_id from g_edges where edge_id = 'E_OWNS_1001_2001'",
+  "resultMode": "GRAPH",
+  "maxNodes": 100,
+  "maxEdges": 100,
+  "includeAttributes": true
+}
+
+### Import CSV preview
+POST {{baseUrl}}/api/v1/graph/import/preview
+Content-Type: multipart/form-data; boundary=graph-import
+
+--graph-import
+Content-Disposition: form-data; name="file"; filename="graph-import.csv"
+Content-Type: text/csv
+
+record_type,node_id,node_type,display_name,party_rk,account_no,from_node_id,to_node_id,edge_id,edge_type,relation_family,directed
+NODE,N_IMPORT_1,PERSON,Imported Customer,PARTY_IMPORT_1,,,,,,,
+NODE,N_IMPORT_2,ACCOUNT,Imported Account,,40817810000000999999,,,,,,
+EDGE,,,,,,N_IMPORT_1,N_IMPORT_2,E_IMPORT_1,OWNS,CUSTOMER_OWNERSHIP,true
+--graph-import--
+
+### Import CSV commit
+POST {{baseUrl}}/api/v1/graph/import/commit
+Content-Type: multipart/form-data; boundary=graph-import
+
+--graph-import
+Content-Disposition: form-data; name="file"; filename="graph-import.csv"
+Content-Type: text/csv
+
+record_type,node_id,node_type,display_name,party_rk,account_no,from_node_id,to_node_id,edge_id,edge_type,relation_family,directed
+NODE,N_IMPORT_1,PERSON,Imported Customer,PARTY_IMPORT_1,,,,,,,
+NODE,N_IMPORT_2,ACCOUNT,Imported Account,,40817810000000999999,,,,,,
+EDGE,,,,,,N_IMPORT_1,N_IMPORT_2,E_IMPORT_1,OWNS,CUSTOMER_OWNERSHIP,true
+--graph-import--
+
 ### Expand (1-hop)
 POST {{baseUrl}}/api/v1/graph/expand
 Content-Type: application/json

@@ -12,7 +12,11 @@ import java.util.Locale;
 @ConfigurationProperties(prefix = "graph.cors")
 public class GraphCorsProperties {
 
-    private List<String> allowedOrigins = List.of("http://localhost:3000", "http://localhost:5173");
+    private List<String> allowedOrigins = List.of(
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+    );
     private List<String> allowedMethods = List.of("GET", "POST", "OPTIONS");
     private List<String> allowedHeaders = List.of("*");
 

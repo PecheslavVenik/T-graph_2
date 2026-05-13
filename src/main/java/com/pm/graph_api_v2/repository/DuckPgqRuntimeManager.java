@@ -35,8 +35,12 @@ public class DuckPgqRuntimeManager {
     }
 
     public void initialize() {
+        syncGraphState();
+    }
+
+    public void syncGraphState() {
         jdbcTemplate.execute((ConnectionCallback<Void>) connection -> {
-            loadDuckPgq(connection);
+            ensureDuckPgqLoaded(connection);
             if (duckPgqProperties.isSyncGraphStateOnStartup()) {
                 projectionManager.recreateProjectionTables(connection);
                 projectionManager.ensureGraphs(connection, VERTEX_LABEL, EDGE_LABEL);
@@ -48,20 +52,40 @@ public class DuckPgqRuntimeManager {
     }
 
     public boolean isDuckPgqLoaded() {
+        return jdbcTemplate.execute((ConnectionCallback<Boolean>) this::isDuckPgqLoaded);
+    }
+
+    public void ensureGraphQueryReady(Connection connection) throws SQLException {
+        ensureDuckPgqLoaded(connection);
+        projectionManager.ensureGraphs(connection, VERTEX_LABEL, EDGE_LABEL);
+    }
+
+    public boolean ensureDuckPgqLoaded() {
         return jdbcTemplate.execute((ConnectionCallback<Boolean>) connection -> {
-            try (PreparedStatement ps = connection.prepareStatement(
-                """
-                SELECT loaded
-                FROM duckdb_extensions()
-                WHERE extension_name = 'duckpgq'
-                LIMIT 1
-                """
-            )) {
-                try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next() && rs.getBoolean(1);
-                }
-            }
+            ensureDuckPgqLoaded(connection);
+            return isDuckPgqLoaded(connection);
         });
+    }
+
+    public void ensureDuckPgqLoaded(Connection connection) throws SQLException {
+        if (!isDuckPgqLoaded(connection)) {
+            loadDuckPgq(connection);
+        }
+    }
+
+    private boolean isDuckPgqLoaded(Connection connection) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement(
+            """
+            SELECT loaded
+            FROM duckdb_extensions()
+            WHERE extension_name = 'duckpgq'
+            LIMIT 1
+            """
+        )) {
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getBoolean(1);
+            }
+        }
     }
 
     private void loadDuckPgq(Connection connection) throws SQLException {

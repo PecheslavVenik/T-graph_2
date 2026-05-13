@@ -18,9 +18,16 @@ public class DuckPgqHealthIndicator implements HealthIndicator {
 
     @Override
     public Health health() {
-        boolean loaded = duckPgqRuntimeManager.isDuckPgqLoaded();
-        if (loaded) {
-            return Health.up().withDetail("duckpgq.loaded", true).build();
+        try {
+            boolean loaded = duckPgqRuntimeManager.ensureDuckPgqLoaded();
+            if (loaded) {
+                return Health.up().withDetail("duckpgq.loaded", true).build();
+            }
+        } catch (Exception ex) {
+            return Health.down()
+                .withDetail("duckpgq.loaded", false)
+                .withDetail("error", ex.getMessage())
+                .build();
         }
 
         return Health.down()

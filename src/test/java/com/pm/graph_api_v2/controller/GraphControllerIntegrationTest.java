@@ -7,8 +7,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+
+import java.nio.charset.StandardCharsets;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
@@ -16,6 +19,8 @@ import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -205,6 +210,134 @@ class GraphControllerIntegrationTest {
     }
 
     @Test
+    void query_shouldStartInvestigationFromSeedSql() throws Exception {
+        String payload = """
+            {
+              "sql": "select node_id from g_nodes where node_id = 'N_PARTY_1001'",
+              "resultMode": "SEEDS",
+              "relationFamily": "CUSTOMER_OWNERSHIP",
+              "direction": "OUTBOUND",
+              "maxNeighborsPerSeed": 10,
+              "maxNodes": 100,
+              "maxEdges": 100,
+              "includeAttributes": true
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/query")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.nodes[*].nodeId", hasItem("N_PARTY_1001")))
+            .andExpect(jsonPath("$.nodes[*].nodeId", hasItem("N_ACC_2001")))
+            .andExpect(jsonPath("$.edges[*].edgeId", hasItem("E_OWNS_1001_2001")))
+            .andExpect(jsonPath("$.meta.relationFamily").value("CUSTOMER_OWNERSHIP"))
+            .andExpect(jsonPath("$.meta.rankingStrategy").value("SQL_SEED_QUERY"));
+    }
+
+    @Test
+    void query_shouldReturnGraphSliceFromEdgeSql() throws Exception {
+        String payload = """
+            {
+              "sql": "select edge_id from g_edges where edge_id = 'E_OWNS_1001_2001'",
+              "resultMode": "GRAPH",
+              "maxNodes": 100,
+              "maxEdges": 100,
+              "includeAttributes": true
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/query")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.nodes[*].nodeId", hasItem("N_PARTY_1001")))
+            .andExpect(jsonPath("$.nodes[*].nodeId", hasItem("N_ACC_2001")))
+            .andExpect(jsonPath("$.edges.length()").value(1))
+            .andExpect(jsonPath("$.edges[0].edgeId").value("E_OWNS_1001_2001"))
+            .andExpect(jsonPath("$.meta.rankingStrategy").value("SQL_GRAPH_QUERY"));
+    }
+
+    @Test
+    void query_shouldRejectUnsafeSql() throws Exception {
+        String payload = """
+            {
+              "sql": "drop table g_nodes",
+              "resultMode": "SEEDS"
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/query")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
+    }
+
+    @Test
+    void importPreview_shouldParseCsvGraph() throws Exception {
+        String csv = """
+            record_type,node_id,node_type,display_name,from_node_id,to_node_id,edge_id,edge_type,relation_family,directed
+            NODE,N_IMPORT_PREVIEW_1,PERSON,Imported Person,,,,,,
+            NODE,N_IMPORT_PREVIEW_2,ACCOUNT,Imported Account,,,,,,
+            EDGE,,,,N_IMPORT_PREVIEW_1,N_IMPORT_PREVIEW_2,E_IMPORT_PREVIEW_1,OWNS,CUSTOMER_OWNERSHIP,true
+            """;
+
+        mockMvc.perform(multipart("/api/v1/graph/import/preview")
+                .file(csvFile(csv)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("PREVIEW"))
+            .andExpect(jsonPath("$.parsedNodeCount").value(2))
+            .andExpect(jsonPath("$.parsedEdgeCount").value(1))
+            .andExpect(jsonPath("$.invalidRowCount").value(0))
+            .andExpect(jsonPath("$.insertedNodeCount").value(0))
+            .andExpect(jsonPath("$.insertedEdgeCount").value(0));
+    }
+
+    @Test
+    void importCommit_shouldImportCsvGraphAndMakeItExpandable() throws Exception {
+        String csv = """
+            record_type,node_id,node_type,display_name,party_rk,account_no,from_node_id,to_node_id,edge_id,edge_type,relation_family,directed
+            NODE,N_IMPORT_COMMIT_1,PERSON,Imported Customer,PARTY_IMPORT_1,,,,,,,
+            NODE,N_IMPORT_COMMIT_2,ACCOUNT,Imported Account,,40817810000000999999,,,,,,
+            EDGE,,,,,,N_IMPORT_COMMIT_1,N_IMPORT_COMMIT_2,E_IMPORT_COMMIT_1,OWNS,CUSTOMER_OWNERSHIP,true
+            """;
+
+        mockMvc.perform(multipart("/api/v1/graph/import/commit")
+                .file(csvFile(csv)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("COMMITTED"))
+            .andExpect(jsonPath("$.parsedNodeCount").value(2))
+            .andExpect(jsonPath("$.parsedEdgeCount").value(1))
+            .andExpect(jsonPath("$.invalidRowCount").value(0))
+            .andExpect(jsonPath("$.insertedNodeCount").value(2))
+            .andExpect(jsonPath("$.insertedEdgeCount").value(1));
+
+        String expandPayload = """
+            {
+              "seeds": [
+                {"type": "NODE_ID", "value": "N_IMPORT_COMMIT_1"}
+              ],
+              "relationFamily": "CUSTOMER_OWNERSHIP",
+              "direction": "OUTBOUND",
+              "maxNeighborsPerSeed": 10,
+              "maxNodes": 100,
+              "maxEdges": 100,
+              "includeAttributes": true
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/expand")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(expandPayload))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.nodes[*].nodeId", hasItem("N_IMPORT_COMMIT_1")))
+            .andExpect(jsonPath("$.nodes[*].nodeId", hasItem("N_IMPORT_COMMIT_2")))
+            .andExpect(jsonPath("$.edges[*].edgeId", hasItem("E_IMPORT_COMMIT_1")))
+            .andExpect(jsonPath("$.meta.source").value("DUCKPGQ"));
+    }
+
+    @Test
     void dictionary_shouldReturnLegendData() throws Exception {
         mockMvc.perform(get("/api/v1/graph/dictionary"))
             .andExpect(status().isOk())
@@ -224,6 +357,23 @@ class GraphControllerIntegrationTest {
             .andExpect(jsonPath("$.styleHints", hasKey("BLACKLIST")))
             .andExpect(jsonPath("$.styleHints.BLACKLIST", equalTo("legend:status:blacklist")))
             .andExpect(jsonPath("$.styleHints", hasKey("ACCOUNT")));
+    }
+
+    @Test
+    void health_shouldReportDuckPgqLoadedUp() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.components.duckpgqLoaded.status").value("UP"))
+            .andExpect(jsonPath("$.components.duckpgqLoaded.details['duckpgq.loaded']").value(true));
+    }
+
+    @Test
+    void cors_shouldAllowViteLoopbackDevOrigin() throws Exception {
+        mockMvc.perform(options("/api/v1/graph/dictionary")
+                .header("Origin", "http://127.0.0.1:5173")
+                .header("Access-Control-Request-Method", "GET"))
+            .andExpect(status().isOk())
+            .andExpect(header().string("Access-Control-Allow-Origin", "http://127.0.0.1:5173"));
     }
 
     @Test
@@ -491,5 +641,14 @@ class GraphControllerIntegrationTest {
                 .content(payload))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
+    }
+
+    private MockMultipartFile csvFile(String csv) {
+        return new MockMultipartFile(
+            "file",
+            "graph-import.csv",
+            "text/csv",
+            csv.getBytes(StandardCharsets.UTF_8)
+        );
     }
 }
