@@ -30,17 +30,20 @@ public class JanusGraphRuntimeManager {
 
     private final Client client;
     private final JanusGraphProperties properties;
-    private final GraphRepository graphRepository;
+    private final GraphNodeRepository nodeRepository;
+    private final GraphEdgeRepository edgeRepository;
     private final Neo4jProjectionSupport projectionSupport;
     private final Map<String, Object> vertexIdsByNodeId = new HashMap<>();
 
     public JanusGraphRuntimeManager(Client client,
                                     JanusGraphProperties properties,
-                                    GraphRepository graphRepository,
+                                    GraphNodeRepository nodeRepository,
+                                    GraphEdgeRepository edgeRepository,
                                     Neo4jProjectionSupport projectionSupport) {
         this.client = client;
         this.properties = properties;
-        this.graphRepository = graphRepository;
+        this.nodeRepository = nodeRepository;
+        this.edgeRepository = edgeRepository;
         this.projectionSupport = projectionSupport;
     }
 
@@ -173,7 +176,7 @@ public class JanusGraphRuntimeManager {
             vertexIdsByNodeId.clear();
         }
         AtomicLong synced = new AtomicLong();
-        graphRepository.forEachNodeBatch(SYNC_BATCH_SIZE, nodes -> {
+        nodeRepository.forEachNodeBatch(SYNC_BATCH_SIZE, nodes -> {
             List<Map<String, Object>> batch = nodes.stream().map(projectionSupport::toNodeProjection).toList();
             if (createOnly) {
                 List<Result> results = submitResults("""
@@ -208,7 +211,7 @@ public class JanusGraphRuntimeManager {
         AtomicLong sourceEdges = new AtomicLong();
         AtomicLong projected = new AtomicLong();
         List<Map<String, Object>> batch = new ArrayList<>(SYNC_BATCH_SIZE);
-        graphRepository.forEachEdgeBatch(SYNC_BATCH_SIZE, edges -> {
+        edgeRepository.forEachEdgeBatch(SYNC_BATCH_SIZE, edges -> {
             for (EdgeRow edge : edges) {
                 projected.addAndGet(addEdgeProjection(batch, edge, false, createOnly));
                 if (!edge.directed()) {

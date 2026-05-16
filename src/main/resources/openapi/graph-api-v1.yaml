@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Investigation Graph API
   version: 1.0.0
-  description: Investigation graph API with switchable graph-query backend, smart 1-hop expansion and bounded export.
+  description: Investigation graph API with switchable graph-query backend, smart 1-hop expansion and bounded JSON/CSV/NDJSON export. Interactive HTML export is a frontend responsibility.
 servers:
   - url: /api/v1
 paths:
@@ -75,7 +75,9 @@ paths:
       description: >
         Accepts one CSV file containing NODE and EDGE rows. Preview returns parsed counts,
         inferred endpoint nodes, validation errors and sample rows, but does not mutate
-        canonical graph tables.
+        canonical graph tables. Non-empty numeric/date fields such as pagerank_score,
+        tx_count and first_seen_at are validated and reported with rowNumber, field and
+        original value when invalid; empty optional values remain allowed.
       requestBody:
         required: true
         content:
@@ -151,6 +153,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GraphNodeSummaryResponse'
+        '400':
+          description: Blank or invalid nodeId
         '404':
           description: Node not found
   /graph/nodes/search:
@@ -196,6 +200,10 @@ paths:
   /graph/export:
     post:
       summary: Export rendered graph as JSON, CSV or NDJSON
+      description: >
+        Serializes the graph payload already assembled by the frontend. The backend does
+        not generate interactive HTML export; frontend owns layout state, pinning, hover,
+        hide-node behavior, merge UI and standalone HTML generation.
       parameters:
         - name: format
           in: query
@@ -382,6 +390,16 @@ components:
         section:
           type: string
           enum: [ROW, NODE, EDGE]
+        field:
+          type:
+            - string
+            - 'null'
+          description: CSV field that failed validation, when the error is field-specific.
+        value:
+          type:
+            - string
+            - 'null'
+          description: Original CSV value that failed validation, truncated to 128 characters.
         message:
           type: string
     ShortestPathRequest:

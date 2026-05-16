@@ -26,14 +26,17 @@ public class KuzuRuntimeManager {
 
     private final Connection connection;
     private final KuzuProperties properties;
-    private final GraphRepository graphRepository;
+    private final GraphNodeRepository nodeRepository;
+    private final GraphEdgeRepository edgeRepository;
 
     public KuzuRuntimeManager(Connection connection,
                               KuzuProperties properties,
-                              GraphRepository graphRepository) {
+                              GraphNodeRepository nodeRepository,
+                              GraphEdgeRepository edgeRepository) {
         this.connection = connection;
         this.properties = properties;
-        this.graphRepository = graphRepository;
+        this.nodeRepository = nodeRepository;
+        this.edgeRepository = edgeRepository;
     }
 
     public void initialize() {
@@ -139,7 +142,7 @@ public class KuzuRuntimeManager {
                 "pagerank_score",
                 "hub_score"
             );
-            graphRepository.forEachNodeBatch(SYNC_BATCH_SIZE, nodes -> {
+            nodeRepository.forEachNodeBatch(SYNC_BATCH_SIZE, nodes -> {
                 try {
                     for (NodeRow node : nodes) {
                         writeCsvRow(
@@ -192,7 +195,7 @@ public class KuzuRuntimeManager {
                 "last_seen_at",
                 "attrs_json"
             );
-            graphRepository.forEachEdgeBatch(SYNC_BATCH_SIZE, edges -> {
+            edgeRepository.forEachEdgeBatch(SYNC_BATCH_SIZE, edges -> {
                 try {
                     for (EdgeRow edge : edges) {
                         writeEdgeCsvRow(writer, edge, false);

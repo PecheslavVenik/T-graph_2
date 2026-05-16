@@ -3,7 +3,7 @@ package com.pm.graph_api_v2.service;
 import com.pm.graph_api_v2.config.GraphProperties;
 import com.pm.graph_api_v2.dto.Direction;
 import com.pm.graph_api_v2.dto.GraphEdgeDto;
-import com.pm.graph_api_v2.repository.GraphRepository;
+import com.pm.graph_api_v2.repository.GraphNodeRepository;
 import com.pm.graph_api_v2.repository.model.EdgeRow;
 import com.pm.graph_api_v2.repository.model.NodeRow;
 import org.springframework.stereotype.Component;
@@ -21,14 +21,14 @@ public class GraphExpandPlanner {
 
     public static final String RANKING_STRATEGY = "GENERIC_ONE_HOP_RANKING";
 
-    private final GraphRepository graphRepository;
+    private final GraphNodeRepository nodeRepository;
     private final GraphDtoMapper graphDtoMapper;
     private final GraphProperties graphProperties;
 
-    public GraphExpandPlanner(GraphRepository graphRepository,
+    public GraphExpandPlanner(GraphNodeRepository nodeRepository,
                               GraphDtoMapper graphDtoMapper,
                               GraphProperties graphProperties) {
-        this.graphRepository = graphRepository;
+        this.nodeRepository = nodeRepository;
         this.graphDtoMapper = graphDtoMapper;
         this.graphProperties = graphProperties;
     }
@@ -92,7 +92,7 @@ public class GraphExpandPlanner {
         }
 
         Map<String, NodeRow> nodesById = new LinkedHashMap<>();
-        for (NodeRow row : graphRepository.findNodesByIds(nodeIds)) {
+        for (NodeRow row : nodeRepository.findNodesByIds(nodeIds)) {
             nodesById.put(row.nodeId(), row);
         }
         return nodesById;

@@ -1,6 +1,8 @@
 package com.pm.graph_api_v2.exception;
 
 import com.pm.graph_api_v2.config.TraceIdFilter;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -25,7 +27,7 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ApiBadRequestException.class)
     public ProblemDetail handleBadRequest(ApiBadRequestException ex) {
         log.warn("Bad request traceId={} message={}", traceId(), ex.getMessage());
-        return problem(HttpStatus.BAD_REQUEST, "BAD_REQUEST", ex.getMessage(), null);
+        return problem(HttpStatus.BAD_REQUEST, "BAD_REQUEST", ex.getMessage(), ex.getDetails());
     }
 
     @ExceptionHandler(ApiNotFoundException.class)
@@ -49,6 +51,17 @@ public class ApiExceptionHandler {
             .toList();
 
         log.warn("Validation failed traceId={} fieldCount={}", traceId(), fields.size());
+        return problem(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Validation failed", fields);
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ProblemDetail handleConstraintViolation(ConstraintViolationException ex) {
+        List<Map<String, String>> fields = ex.getConstraintViolations()
+            .stream()
+            .map(this::toMap)
+            .toList();
+
+        log.warn("Constraint validation failed traceId={} violationCount={}", traceId(), fields.size());
         return problem(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Validation failed", fields);
     }
 
@@ -95,6 +108,16 @@ public class ApiExceptionHandler {
         return Map.of(
             "field", error.getField(),
             "message", error.getDefaultMessage() == null ? "invalid" : error.getDefaultMessage()
+        );
+    }
+
+    private Map<String, String> toMap(ConstraintViolation<?> violation) {
+        String path = violation.getPropertyPath().toString();
+        int dotIndex = path.lastIndexOf('.');
+        String field = dotIndex >= 0 ? path.substring(dotIndex + 1) : path;
+        return Map.of(
+            "field", field,
+            "message", violation.getMessage() == null ? "invalid" : violation.getMessage()
         );
     }
 

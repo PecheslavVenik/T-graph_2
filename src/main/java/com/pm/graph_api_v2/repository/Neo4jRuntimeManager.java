@@ -26,16 +26,19 @@ public class Neo4jRuntimeManager {
     private static final int CLEAR_BATCH_SIZE = 5_000;
 
     private final Driver driver;
-    private final GraphRepository graphRepository;
+    private final GraphNodeRepository nodeRepository;
+    private final GraphEdgeRepository edgeRepository;
     private final Neo4jProjectionSupport projectionSupport;
     private final Neo4jProperties neo4jProperties;
 
     public Neo4jRuntimeManager(Driver driver,
-                               GraphRepository graphRepository,
+                               GraphNodeRepository nodeRepository,
+                               GraphEdgeRepository edgeRepository,
                                Neo4jProjectionSupport projectionSupport,
                                Neo4jProperties neo4jProperties) {
         this.driver = driver;
-        this.graphRepository = graphRepository;
+        this.nodeRepository = nodeRepository;
+        this.edgeRepository = edgeRepository;
         this.projectionSupport = projectionSupport;
         this.neo4jProperties = neo4jProperties;
     }
@@ -85,7 +88,7 @@ public class Neo4jRuntimeManager {
 
     private void syncNodes(Session session) {
         AtomicLong syncedNodes = new AtomicLong();
-        graphRepository.forEachNodeBatch(SYNC_BATCH_SIZE, nodes -> {
+        nodeRepository.forEachNodeBatch(SYNC_BATCH_SIZE, nodes -> {
             List<Map<String, Object>> batch = nodes.stream()
                 .map(projectionSupport::toNodeProjection)
                 .toList();
@@ -115,7 +118,7 @@ public class Neo4jRuntimeManager {
         AtomicLong projectedRelationships = new AtomicLong();
         List<Map<String, Object>> batch = new ArrayList<>(SYNC_BATCH_SIZE);
 
-        graphRepository.forEachEdgeBatch(SYNC_BATCH_SIZE, edges -> {
+        edgeRepository.forEachEdgeBatch(SYNC_BATCH_SIZE, edges -> {
             for (EdgeRow edge : edges) {
                 appendRelationshipProjection(session, batch, projectedRelationships, edge, false);
                 if (!edge.directed()) {

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${1:-http://localhost:8080}"
+# Uses the Flyway demo seed from local/test profiles:
+# PARTY_1001, N_PARTY_1001, ACCOUNT_FLOW, CORPORATE_CONTROL.
+BASE_URL="${1:-${BASE_URL:-http://localhost:8080}}"
 API_BASE="${BASE_URL}/api/v1"
 
 tmp_body="$(mktemp)"

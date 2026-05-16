@@ -175,17 +175,17 @@ cp bench/backends/_template.toml bench/backends/memgraph.toml
 
 ## Зарегистрированные СУБД
 
-Сейчас в bench-системе зарегистрированы:
+Сейчас в bench-системе зарегистрированы R&D-кандидаты. Этот список означает наличие adapter/config для исследования, а не production-ready поддержку. Основной проверенный backend для demo/MVP - DuckDB + DuckPGQ; остальные backend-и требуют отдельного smoke/workload прогона перед публичным заявлением поддержки.
 
 | backend | status | зачем включен |
 | --- | --- | --- |
-| `duckpgq` | implemented | embedded baseline: DuckDB canonical storage + PGQ traversal |
-| `neo4j` | implemented | зрелая property graph DB, Cypher baseline |
-| `memgraph` | implemented | Cypher-compatible low-latency/in-memory-first кандидат |
-| `kuzu` | implemented | embedded columnar property graph кандидат |
-| `postgres-age` | implemented | PostgreSQL operational baseline плюс Apache AGE/openCypher |
-| `arangodb` | implemented | multi-model document/graph кандидат для graph + evidence payloads |
-| `janusgraph` | implemented | distributed Gremlin/TinkerPop кандидат для scale-out проверки |
+| `duckpgq` | verified demo path | embedded baseline: DuckDB canonical storage + PGQ traversal |
+| `neo4j` | experimental adapter | зрелая property graph DB, Cypher baseline |
+| `memgraph` | experimental/unverified adapter | Cypher-compatible low-latency/in-memory-first кандидат |
+| `kuzu` | experimental/unverified adapter | embedded columnar property graph кандидат |
+| `postgres-age` | experimental/unverified adapter | PostgreSQL operational baseline плюс Apache AGE/openCypher |
+| `arangodb` | experimental/unverified adapter | multi-model document/graph кандидат для graph + evidence payloads |
+| `janusgraph` | experimental/unverified adapter | distributed Gremlin/TinkerPop кандидат для scale-out проверки |
 
 Внешние сервисы для кандидатов добавлены в `docker-compose.yml` под profile `bench-candidates`. `Kuzu` отдельного compose-сервиса не имеет, потому что это embedded/in-process кандидат.
 

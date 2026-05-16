@@ -23,16 +23,19 @@ public class ArangoRuntimeManager {
 
     private final ArangoHttpClient arango;
     private final ArangoProperties properties;
-    private final GraphRepository graphRepository;
+    private final GraphNodeRepository nodeRepository;
+    private final GraphEdgeRepository edgeRepository;
     private final ObjectMapper objectMapper;
 
     public ArangoRuntimeManager(ArangoHttpClient arango,
                                 ArangoProperties properties,
-                                GraphRepository graphRepository,
+                                GraphNodeRepository nodeRepository,
+                                GraphEdgeRepository edgeRepository,
                                 ObjectMapper objectMapper) {
         this.arango = arango;
         this.properties = properties;
-        this.graphRepository = graphRepository;
+        this.nodeRepository = nodeRepository;
+        this.edgeRepository = edgeRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -91,7 +94,7 @@ public class ArangoRuntimeManager {
 
     private void syncNodes() {
         AtomicLong synced = new AtomicLong();
-        graphRepository.forEachNodeBatch(SYNC_BATCH_SIZE, nodes -> {
+        nodeRepository.forEachNodeBatch(SYNC_BATCH_SIZE, nodes -> {
             List<Map<String, Object>> batch = nodes.stream().map(this::nodeDocument).toList();
             arango.post("/_db/" + properties.getDatabase() + "/_api/document/graph_nodes?overwriteMode=replace", batch);
             long total = synced.addAndGet(batch.size());
@@ -106,7 +109,7 @@ public class ArangoRuntimeManager {
         AtomicLong sourceEdges = new AtomicLong();
         AtomicLong projected = new AtomicLong();
         List<Map<String, Object>> batch = new ArrayList<>(SYNC_BATCH_SIZE);
-        graphRepository.forEachEdgeBatch(SYNC_BATCH_SIZE, edges -> {
+        edgeRepository.forEachEdgeBatch(SYNC_BATCH_SIZE, edges -> {
             for (EdgeRow edge : edges) {
                 batch.add(edgeDocument(edge, false));
                 projected.incrementAndGet();

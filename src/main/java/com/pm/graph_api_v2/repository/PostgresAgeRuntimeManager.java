@@ -23,14 +23,17 @@ public class PostgresAgeRuntimeManager {
     private static final int SYNC_BATCH_SIZE = 500;
 
     private final PostgresAgeConnectionFactory connectionFactory;
-    private final GraphRepository graphRepository;
+    private final GraphNodeRepository nodeRepository;
+    private final GraphEdgeRepository edgeRepository;
     private final PostgresAgeProperties properties;
 
     public PostgresAgeRuntimeManager(PostgresAgeConnectionFactory connectionFactory,
-                                     GraphRepository graphRepository,
+                                     GraphNodeRepository nodeRepository,
+                                     GraphEdgeRepository edgeRepository,
                                      PostgresAgeProperties properties) {
         this.connectionFactory = connectionFactory;
-        this.graphRepository = graphRepository;
+        this.nodeRepository = nodeRepository;
+        this.edgeRepository = edgeRepository;
         this.properties = properties;
     }
 
@@ -159,7 +162,7 @@ public class PostgresAgeRuntimeManager {
                 attrs_json = EXCLUDED.attrs_json
             """.formatted(connectionFactory.table("graph_nodes"));
 
-        graphRepository.forEachNodeBatch(SYNC_BATCH_SIZE, nodes -> {
+        nodeRepository.forEachNodeBatch(SYNC_BATCH_SIZE, nodes -> {
             try (PreparedStatement ps = connection.prepareStatement(sql)) {
                 for (NodeRow node : nodes) {
                     bindNode(ps, node);
@@ -206,7 +209,7 @@ public class PostgresAgeRuntimeManager {
                 attrs_json = EXCLUDED.attrs_json
             """.formatted(connectionFactory.table("graph_edges"));
 
-        graphRepository.forEachEdgeBatch(SYNC_BATCH_SIZE, edges -> {
+        edgeRepository.forEachEdgeBatch(SYNC_BATCH_SIZE, edges -> {
             try (PreparedStatement ps = connection.prepareStatement(sql)) {
                 for (EdgeRow edge : edges) {
                     bindEdge(ps, edge, false);

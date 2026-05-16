@@ -1,7 +1,7 @@
 # Graph API v2 (Операционный анализ)
 
 Stateless REST API для расследовательской графовой аналитики на DuckDB с переключаемым graph query backend.
-Сейчас поддерживаются `DuckPGQ` и `Neo4j`.
+Основной проверенный backend для demo/MVP - `DuckDB + DuckPGQ`: canonical storage в DuckDB, обход графа через DuckPGQ projection. Остальные adapter-ы в кодовой базе нужны для R&D/benchmark-сравнения и считаются experimental/unverified, если для конкретного backend-а не прогнан отдельный сценарий.
 Модель данных поддерживает generic AML graph: `PERSON`, `ACCOUNT`, `COMPANY`, `DEVICE`, `ADDRESS` и другие node types поверх общей схемы `g_nodes/g_edges/g_identifiers`.
 
 ## Что умеет API
@@ -13,6 +13,7 @@ Stateless REST API для расследовательской графовой 
 - `GET /api/v1/graph/dictionary` - справочник типов связей/статусов для легенды фронта
 - `POST /api/v1/graph/export?format=JSON|CSV|NDJSON` - экспорт графа, который фронт уже собрал
 - Стабильные `nodeId`/`edgeId` для merge на фронте
+- Backend не генерирует интерактивный HTML export: он отдает данные графа и stable IDs, а frontend отвечает за layout, hover, pinning, hide/merge UI и HTML export
 - Метрики и health endpoints (`/actuator/*`)
 
 ## Доменный фокус MVP
@@ -25,9 +26,9 @@ Stateless REST API для расследовательской графовой 
 ## Архитектура (кратко)
 - `GraphController` - HTTP слой
 - `InvestigationService` - оркестрация расследовательских сценариев, ранжирование и budget-лимиты через backend-интерфейс `GraphQueryBackend`
-- `GraphRepository` - резолв идентификаторов и загрузка узлов/ребер
+- `GraphNodeRepository`, `GraphEdgeRepository`, `GraphDictionaryRepository`, `GraphSqlRepository` - резолв идентификаторов, чтение узлов/ребер, справочники и SQL-backed graph slices
 - `DuckPgqGraphQueryRepository` - текущая DuckPGQ-реализация `GraphQueryBackend`
-- `Neo4jGraphQueryBackend` - Neo4j-реализация `GraphQueryBackend`
+- `Neo4jGraphQueryBackend`, `MemgraphGraphQueryBackend`, `KuzuGraphQueryBackend`, `PostgresAgeGraphQueryBackend`, `ArangoGraphQueryBackend`, `JanusGraphQueryBackend` - experimental adapters для R&D benchmark
 - `db/migration` - миграции Flyway (схема + seed)
 
 ## Быстрый старт (локально, JVM)
@@ -40,7 +41,14 @@ Stateless REST API для расследовательской графовой 
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
-`local` профиль подключает большую FinBench DuckDB базу `./data/finbench_sf0_1.duckdb` и выключает Flyway, потому что эта база уже предзагружена. По умолчанию активен `DuckPGQ`. Его можно переключить на `Neo4j` через `GRAPH_QUERY_BACKEND=NEO4J`.
+`local` профиль создает DuckDB файл `target/graph_local.db`, включает Flyway и накатывает demo seed из `src/main/resources/db/migration`. Это воспроизводимый сценарий для чистого clone: никакой `data/*.duckdb` файл заранее не нужен. По умолчанию активен `DuckPGQ`.
+
+Если нужен внешний FinBench dataset, используйте отдельный профиль:
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.profiles=finbench
+```
+
+Профиль `finbench` ожидает уже подготовленный `./data/finbench_sf0_1.duckdb` и выключает Flyway, потому что база должна быть предзагружена. Подготовка FinBench описана в `docs/finbench.md`; это не обязательный path для demo/smoke.
 
 ## Быстрый старт (Docker Compose)
 ```bash
@@ -72,6 +80,17 @@ make smoke
 ```bash
 ./scripts/smoke.sh
 ```
+
+Smoke рассчитан на demo seed из Flyway (`PARTY_1001`, `N_PARTY_1001`, `ACCOUNT_FLOW`, `CORPORATE_CONTROL`) и проверяет health, dictionary, expand, shortest-path и export CSV против уже запущенного приложения. Для нестандартного порта передайте base URL первым аргументом:
+```bash
+./scripts/smoke.sh http://localhost:18080
+```
+
+## Матрица соответствия ТЗ
+Краткая матрица backend/frontend ответственности вынесена в `docs/customer-requirements-matrix.md`.
+
+## Основание demo taxonomy
+Demo node/edge types не являются production-онтологией заказчика. Они используются для воспроизводимого smoke/demo seed и обоснованы публичной финансовой graph-моделью LDBC FinBench. Mapping и источники вынесены в `docs/domain-taxonomy-basis.md`.
 
 ## Benchmarking СУБД
 Основной research runner сравнивает backend-и по одному workload-у и пишет воспроизводимый отчет:
@@ -236,6 +255,8 @@ EDGE,,,,,,N_IMPORT_1,N_IMPORT_2,E_IMPORT_1,OWNS,CUSTOMER_OWNERSHIP,true
 
 Поддерживаемые edge-колонки: `edge_id`, `from_node_id`/`source`/`from`, `to_node_id`/`target`/`to`, `edge_type`/`type`/`relation`, `relation_family`, `directed`, `tx_count`, `tx_sum`, `strength_score`, `evidence_count`, `source_system`, `first_seen_at`, `last_seen_at`, `attrs_json`.
 
+CSV import валидирует непустые numeric/date поля. Например, `pagerank_score=not-a-number`, `tx_count=not-a-long`, `first_seen_at=not-an-instant` вернут errors с `rowNumber`, `field`, `value` и не будут молча превращены в `0`/`null`. Пустые optional-поля остаются допустимыми.
+
 Export NDJSON:
 ```bash
 curl -s -X POST "$BASE/graph/export?format=NDJSON" \
@@ -258,7 +279,7 @@ curl -s -X POST "$BASE/graph/export?format=CSV" \
 
 ## Режимы DuckPGQ
 Основные env-флаги:
-- `GRAPH_QUERY_BACKEND=DUCKPGQ|NEO4J`
+- `GRAPH_QUERY_BACKEND=DUCKPGQ` для основного demo path; `NEO4J`, `MEMGRAPH`, `POSTGRES_AGE`, `ARANGODB`, `JANUSGRAPH`, `KUZU` доступны как experimental adapter values
 - `GRAPH_DUCKPGQ_ENABLED=true|false`
 - `GRAPH_DUCKPGQ_AUTO_LOAD=true|false`
 - `GRAPH_DUCKPGQ_SYNC_GRAPH_STATE_ON_STARTUP=true|false`
@@ -267,6 +288,20 @@ curl -s -X POST "$BASE/graph/export?format=CSV" \
 - `enabled=true, auto-load=true` - backend поднимает projection tables и property graphs на старте
 - `sync-graph-state-on-startup=false` - extension загружается, но projection tables и property graphs не пересобираются автоматически
 - если активен `DUCKPGQ` и `duckpgq` недоступен, приложение падает при старте
+
+## Статус graphDB backend-ов
+
+| backend | текущий статус |
+| --- | --- |
+| DuckDB + DuckPGQ | основной demo/MVP backend, покрыт integration smoke/test path |
+| Neo4j | experimental adapter: есть код и unit-level coverage, production-ready поддержка не заявляется |
+| Memgraph | experimental/unverified adapter для benchmark-кандидата |
+| Kuzu | experimental/unverified adapter для benchmark-кандидата |
+| PostgreSQL + Apache AGE | experimental/unverified adapter для benchmark-кандидата |
+| ArangoDB | experimental/unverified adapter для benchmark-кандидата |
+| JanusGraph | experimental/unverified adapter для benchmark-кандидата |
+
+`bench/backends/*.toml` регистрируют кандидатов для исследования и не означают production-ready поддержку всех СУБД. Перед демонстрацией или защитой конкретного backend-а нужно отдельно прогнать его compose/service setup, projection sync, smoke и workload.
 
 ## Режимы Neo4j
 Основные env-флаги:
@@ -308,7 +343,13 @@ java -jar app.jar
 - `meta.source` приходит от активного backend-а: `DUCKPGQ` или `NEO4J`
 - `meta.relationFamily`, `meta.rankingStrategy`, `meta.candidateEdgeCount`, `meta.warnings` объясняют, как backend сузил результат
 - `expand` больше не принимает `existingGraph`: фронт сам досклеивает граф по стабильным `nodeId` и `edgeId`
+- JSON/CSV/NDJSON export - backend responsibility; интерактивный HTML export - frontend responsibility, потому что он зависит от layout, pinning, hover, hide nodes и merge UI
 - Контрактные заглушки интеграции: `src/main/java/com/pm/graph_api_v2/integration`
+
+## Known gaps / out of scope для дипломного demo
+- Security/auth, multi-tenant authorization и audit trail не реализованы; это production gap, а не часть demo backend scope.
+- Интерактивный HTML export, layout gravity, pinning, hover, hide nodes и визуальный merge UI реализуются на frontend.
+- Experimental graphDB adapters требуют отдельной проверки перед заявлением production-ready поддержки.
 
 ## Команды для разработки
 ```bash

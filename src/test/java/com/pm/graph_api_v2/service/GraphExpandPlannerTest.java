@@ -2,7 +2,7 @@ package com.pm.graph_api_v2.service;
 
 import com.pm.graph_api_v2.config.GraphProperties;
 import com.pm.graph_api_v2.dto.Direction;
-import com.pm.graph_api_v2.repository.GraphRepository;
+import com.pm.graph_api_v2.repository.GraphNodeRepository;
 import com.pm.graph_api_v2.repository.model.EdgeRow;
 import com.pm.graph_api_v2.repository.model.NodeRow;
 import org.junit.jupiter.api.Test;
@@ -22,14 +22,14 @@ class GraphExpandPlannerTest {
     @Test
     @SuppressWarnings("unchecked")
     void plan_shouldLimitUniqueNeighborsWithoutDroppingParallelEdges() {
-        GraphRepository graphRepository = mock(GraphRepository.class);
-        when(graphRepository.findNodesByIds(anyCollection())).thenAnswer(invocation -> {
+        GraphNodeRepository nodeRepository = mock(GraphNodeRepository.class);
+        when(nodeRepository.findNodesByIds(anyCollection())).thenAnswer(invocation -> {
             Collection<String> nodeIds = invocation.getArgument(0);
             return nodeIds.stream().map(this::node).toList();
         });
 
         GraphExpandPlanner planner = new GraphExpandPlanner(
-            graphRepository,
+            nodeRepository,
             new GraphDtoMapper(),
             new GraphProperties()
         );

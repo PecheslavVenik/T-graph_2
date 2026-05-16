@@ -4,7 +4,8 @@ import com.pm.graph_api_v2.dto.GraphImportErrorDto;
 import com.pm.graph_api_v2.dto.GraphImportResponse;
 import com.pm.graph_api_v2.exception.ApiBadRequestException;
 import com.pm.graph_api_v2.repository.DuckPgqRuntimeManager;
-import com.pm.graph_api_v2.repository.GraphRepository;
+import com.pm.graph_api_v2.repository.GraphImportWriter;
+import com.pm.graph_api_v2.repository.GraphNodeRepository;
 import com.pm.graph_api_v2.repository.model.ImportEdgeRow;
 import com.pm.graph_api_v2.repository.model.ImportGraphData;
 import com.pm.graph_api_v2.repository.model.ImportNodeRow;
@@ -59,14 +60,17 @@ public class GraphImportService {
         Map.entry("ip", "IP")
     );
 
-    private final GraphRepository graphRepository;
+    private final GraphNodeRepository nodeRepository;
+    private final GraphImportWriter importWriter;
     private final ObjectMapper objectMapper;
     private final ObjectProvider<DuckPgqRuntimeManager> duckPgqRuntimeManager;
 
-    public GraphImportService(GraphRepository graphRepository,
+    public GraphImportService(GraphNodeRepository nodeRepository,
+                              GraphImportWriter importWriter,
                               ObjectMapper objectMapper,
                               ObjectProvider<DuckPgqRuntimeManager> duckPgqRuntimeManager) {
-        this.graphRepository = graphRepository;
+        this.nodeRepository = nodeRepository;
+        this.importWriter = importWriter;
         this.objectMapper = objectMapper;
         this.duckPgqRuntimeManager = duckPgqRuntimeManager;
     }
@@ -79,10 +83,10 @@ public class GraphImportService {
     public GraphImportResponse commit(MultipartFile file) {
         ParsedImport parsed = parse(file);
         if (!parsed.errors().isEmpty()) {
-            throw new ApiBadRequestException("Import file has validation errors; call preview first");
+            throw new ApiBadRequestException("Import file has validation errors; call preview first", parsed.errors());
         }
 
-        ImportWriteResult writeResult = graphRepository.importGraph(new ImportGraphData(parsed.nodes(), parsed.edges()));
+        ImportWriteResult writeResult = importWriter.importGraph(new ImportGraphData(parsed.nodes(), parsed.edges()));
         duckPgqRuntimeManager.ifAvailable(DuckPgqRuntimeManager::syncGraphState);
 
         return response(fileName(file), "COMMITTED", parsed, writeResult, parsed.warnings());
@@ -161,6 +165,11 @@ public class GraphImportService {
         String nodeType = firstOrDefault(row, "PERSON", "node_type", "entity_type");
         String displayName = firstOrDefault(row, nodeId, "display_name", "name", "full_name", "party_rk", "person_id", "phone_no", "phone");
         String phoneNo = first(row, "phone_no", "phone");
+        ParsedValue<Double> pagerankScore = parseDouble(row, "pagerank_score", 0, rowNumber, "NODE", errors);
+        ParsedValue<Double> hubScore = parseDouble(row, "hub_score", 0, rowNumber, "NODE", errors);
+        if (!pagerankScore.valid() || !hubScore.valid()) {
+            return;
+        }
 
         nodesById.put(nodeId, new ImportNodeRow(
             nodeId,
@@ -175,8 +184,8 @@ public class GraphImportService {
             first(row, "employer"),
             first(row, "city"),
             firstOrDefault(row, "file_import", "source_system"),
-            parseDouble(first(row, "pagerank_score"), 0),
-            parseDouble(first(row, "hub_score"), 0),
+            pagerankScore.value(),
+            hubScore.value(),
             identifiers,
             attributes(row, NODE_COLUMNS)
         ));
@@ -213,20 +222,35 @@ public class GraphImportService {
             edgeId = StableIdUtil.stableEdgeId(null, fromNodeId, toNodeId, normalizedEdgeType, directed, relationFamily);
         }
 
+        ParsedValue<Long> txCount = parseLong(row, "tx_count", 0, rowNumber, "EDGE", errors);
+        ParsedValue<Double> txSum = parseDouble(row, "tx_sum", 0, rowNumber, "EDGE", errors);
+        ParsedValue<Double> strengthScore = parseDouble(row, "strength_score", 0, rowNumber, "EDGE", errors);
+        ParsedValue<Long> evidenceCount = parseLong(row, "evidence_count", 0, rowNumber, "EDGE", errors);
+        ParsedValue<Instant> firstSeenAt = parseInstant(row, "first_seen_at", rowNumber, "EDGE", errors);
+        ParsedValue<Instant> lastSeenAt = parseInstant(row, "last_seen_at", rowNumber, "EDGE", errors);
+        if (!txCount.valid()
+            || !txSum.valid()
+            || !strengthScore.valid()
+            || !evidenceCount.valid()
+            || !firstSeenAt.valid()
+            || !lastSeenAt.valid()) {
+            return;
+        }
+
         edgesById.put(edgeId, new ImportEdgeRow(
             edgeId,
             fromNodeId,
             toNodeId,
             normalizedEdgeType,
             directed,
-            parseLong(first(row, "tx_count"), 0),
-            parseDouble(first(row, "tx_sum"), 0),
+            txCount.value(),
+            txSum.value(),
             relationFamily,
-            parseDouble(first(row, "strength_score"), 0),
-            parseLong(first(row, "evidence_count"), 0),
+            strengthScore.value(),
+            evidenceCount.value(),
             firstOrDefault(row, "file_import", "source_system"),
-            parseInstant(first(row, "first_seen_at")),
-            parseInstant(first(row, "last_seen_at")),
+            firstSeenAt.value(),
+            lastSeenAt.value(),
             attributes(row, EDGE_COLUMNS)
         ));
     }
@@ -243,7 +267,7 @@ public class GraphImportService {
         }
 
         Set<String> existingIds = new HashSet<>();
-        for (NodeRow existingNode : graphRepository.findNodesByIds(endpointIds)) {
+        for (NodeRow existingNode : nodeRepository.findNodesByIds(endpointIds)) {
             existingIds.add(existingNode.nodeId());
         }
 
@@ -286,7 +310,7 @@ public class GraphImportService {
             parsed.nodes().size(),
             parsed.edges().size(),
             parsed.inferredNodeCount(),
-            parsed.errors().size(),
+            invalidRowCount(parsed.errors()),
             writeResult.insertedNodeCount(),
             writeResult.updatedNodeCount(),
             writeResult.insertedEdgeCount(),
@@ -476,6 +500,24 @@ public class GraphImportService {
         }
     }
 
+    private void addFieldError(List<GraphImportErrorDto> errors,
+                               int rowNumber,
+                               String section,
+                               String field,
+                               String value,
+                               String message) {
+        if (errors.size() < MAX_ERRORS) {
+            errors.add(new GraphImportErrorDto(rowNumber, section, field, truncateValue(value), message));
+        }
+    }
+
+    private int invalidRowCount(List<GraphImportErrorDto> errors) {
+        return (int) errors.stream()
+            .map(GraphImportErrorDto::rowNumber)
+            .distinct()
+            .count();
+    }
+
     private String normalizeColumn(String raw) {
         return raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT).replace('-', '_').replace(' ', '_');
     }
@@ -495,28 +537,69 @@ public class GraphImportService {
         return "true".equalsIgnoreCase(normalized) || "1".equals(normalized) || "yes".equalsIgnoreCase(normalized);
     }
 
-    private long parseLong(String value, long fallback) {
+    private ParsedValue<Long> parseLong(Map<String, String> row,
+                                        String field,
+                                        long fallback,
+                                        int rowNumber,
+                                        String section,
+                                        List<GraphImportErrorDto> errors) {
+        String value = first(row, field);
+        if (value == null) {
+            return ParsedValue.valid(fallback);
+        }
         try {
-            return value == null || value.isBlank() ? fallback : Long.parseLong(value.trim());
-        } catch (NumberFormatException ignored) {
-            return fallback;
+            return ParsedValue.valid(Long.parseLong(value.trim()));
+        } catch (NumberFormatException ex) {
+            addFieldError(errors, rowNumber, section, field, value, field + " must be a whole number");
+            return ParsedValue.invalid(fallback);
         }
     }
 
-    private double parseDouble(String value, double fallback) {
+    private ParsedValue<Double> parseDouble(Map<String, String> row,
+                                            String field,
+                                            double fallback,
+                                            int rowNumber,
+                                            String section,
+                                            List<GraphImportErrorDto> errors) {
+        String value = first(row, field);
+        if (value == null) {
+            return ParsedValue.valid(fallback);
+        }
         try {
-            return value == null || value.isBlank() ? fallback : Double.parseDouble(value.trim());
-        } catch (NumberFormatException ignored) {
-            return fallback;
+            double parsed = Double.parseDouble(value.trim());
+            if (!Double.isFinite(parsed)) {
+                addFieldError(errors, rowNumber, section, field, value, field + " must be a finite number");
+                return ParsedValue.invalid(fallback);
+            }
+            return ParsedValue.valid(parsed);
+        } catch (NumberFormatException ex) {
+            addFieldError(errors, rowNumber, section, field, value, field + " must be a finite number");
+            return ParsedValue.invalid(fallback);
         }
     }
 
-    private Instant parseInstant(String value) {
-        try {
-            return value == null || value.isBlank() ? null : Instant.parse(value.trim());
-        } catch (Exception ignored) {
-            return null;
+    private ParsedValue<Instant> parseInstant(Map<String, String> row,
+                                              String field,
+                                              int rowNumber,
+                                              String section,
+                                              List<GraphImportErrorDto> errors) {
+        String value = first(row, field);
+        if (value == null) {
+            return ParsedValue.valid(null);
         }
+        try {
+            return ParsedValue.valid(Instant.parse(value.trim()));
+        } catch (Exception ex) {
+            addFieldError(errors, rowNumber, section, field, value, field + " must be an ISO-8601 instant");
+            return ParsedValue.invalid(null);
+        }
+    }
+
+    private String truncateValue(String value) {
+        if (value == null || value.length() <= 128) {
+            return value;
+        }
+        return value.substring(0, 128) + "...";
     }
 
     private String fileName(MultipartFile file) {
@@ -532,5 +615,15 @@ public class GraphImportService {
         List<String> warnings,
         List<Map<String, String>> sampleRows
     ) {
+    }
+
+    private record ParsedValue<T>(T value, boolean valid) {
+        private static <T> ParsedValue<T> valid(T value) {
+            return new ParsedValue<>(value, true);
+        }
+
+        private static <T> ParsedValue<T> invalid(T fallback) {
+            return new ParsedValue<>(fallback, false);
+        }
     }
 }

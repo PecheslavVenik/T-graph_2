@@ -33,7 +33,8 @@ class Neo4jRuntimeManagerTest {
 
     private Driver driver;
     private Session session;
-    private GraphRepository graphRepository;
+    private GraphNodeRepository nodeRepository;
+    private GraphEdgeRepository edgeRepository;
     private Neo4jProperties neo4jProperties;
     private Neo4jRuntimeManager runtimeManager;
 
@@ -41,11 +42,12 @@ class Neo4jRuntimeManagerTest {
     void setUp() {
         driver = mock(Driver.class);
         session = mock(Session.class);
-        graphRepository = mock(GraphRepository.class);
+        nodeRepository = mock(GraphNodeRepository.class);
+        edgeRepository = mock(GraphEdgeRepository.class);
         neo4jProperties = new Neo4jProperties();
         neo4jProperties.setDatabase("");
         when(driver.session()).thenReturn(session);
-        runtimeManager = new Neo4jRuntimeManager(driver, graphRepository, new Neo4jProjectionSupport(new ObjectMapper()), neo4jProperties);
+        runtimeManager = new Neo4jRuntimeManager(driver, nodeRepository, edgeRepository, new Neo4jProjectionSupport(new ObjectMapper()), neo4jProperties);
     }
 
     @Test
@@ -173,7 +175,7 @@ class Neo4jRuntimeManagerTest {
             Consumer<List<NodeRow>> consumer = invocation.getArgument(1);
             consumer.accept(nodes);
             return null;
-        }).when(graphRepository).forEachNodeBatch(anyInt(), any());
+        }).when(nodeRepository).forEachNodeBatch(anyInt(), any());
     }
 
     private void stubEdgeBatches(List<EdgeRow> edges) {
@@ -181,6 +183,6 @@ class Neo4jRuntimeManagerTest {
             Consumer<List<EdgeRow>> consumer = invocation.getArgument(1);
             consumer.accept(edges);
             return null;
-        }).when(graphRepository).forEachEdgeBatch(anyInt(), any());
+        }).when(edgeRepository).forEachEdgeBatch(anyInt(), any());
     }
 }
