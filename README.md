@@ -55,6 +55,31 @@ Stateless REST API для расследовательской графовой 
 docker compose up --build -d
 ```
 
+Docker по умолчанию использует FinBench DuckDB-файл из локальной папки `./data`:
+`./data/finbench_sf0_1.duckdb` монтируется в контейнер как `/data/graph_api/finbench_sf0_1.duckdb`.
+Flyway в Docker-сценарии выключен, потому что FinBench-база должна быть уже подготовлена.
+
+Имя файла можно переопределить через переменную `GRAPH_API_DUCKDB_FILE`, например:
+```bash
+GRAPH_API_DUCKDB_FILE=finbench_smoke.duckdb docker compose up --build -d
+```
+
+Если порт `8080` занят, поднимите API на другом host-порту:
+```bash
+GRAPH_API_PORT=18080 docker compose up --build -d
+```
+
+Если файл отсутствует, контейнер завершится с ошибкой вместо создания пустой DuckDB. Подготовка FinBench описана в `docs/finbench.md`.
+На Windows можно подготовить базу через PowerShell/WSL-обертку:
+```powershell
+.\scripts\finbench-data.ps1 -DbPath data\finbench_sf0_1.duckdb
+```
+
+Если после изменения seed-данных frontend видит старую базу от предыдущего Docker volume-сценария, удалите старый volume:
+```bash
+docker compose down -v
+```
+
 Поднять Neo4j для альтернативного backend-а:
 ```bash
 docker compose --profile neo4j up -d neo4j

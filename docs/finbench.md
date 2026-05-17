@@ -45,6 +45,14 @@ target/bench-seeds/finbench.json
 
 ## Быстрая проверка
 
+Windows/PowerShell через WSL:
+
+```powershell
+.\scripts\finbench-data.ps1 -DbPath data\finbench_sf0_1.duckdb
+```
+
+Скрипт ожидает архив `bench/sf0.1.tar` или `bench/sf1.tar` и установленный `duckdb` CLI внутри WSL.
+
 Smoke import:
 
 ```bash

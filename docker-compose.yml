@@ -5,22 +5,35 @@ services:
       dockerfile: Dockerfile
     container_name: graph-api-v2
     ports:
-      - "8080:8080"
+      - "${GRAPH_API_PORT:-8080}:8080"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:duckdb:/data/graph_api/graph_runtime.db
+      GRAPH_API_DUCKDB_FILE: "${GRAPH_API_DUCKDB_FILE:-finbench_sf0_1.duckdb}"
+      SPRING_DATASOURCE_URL: jdbc:duckdb:/data/graph_api/${GRAPH_API_DUCKDB_FILE:-finbench_sf0_1.duckdb}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "2"
       SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "1"
       SPRING_DATASOURCE_ALLOW_UNSIGNED_EXTENSIONS: "true"
-      SPRING_FLYWAY_ENABLED: "true"
+      SPRING_FLYWAY_ENABLED: "false"
       GRAPH_QUERY_BACKEND: "DUCKPGQ"
       GRAPH_DUCKPGQ_ENABLED: "true"
       GRAPH_DUCKPGQ_AUTO_LOAD: "true"
       GRAPH_DUCKPGQ_PREFER_LATEST: "false"
-      GRAPH_CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173"
+      GRAPH_CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173"
       JAVA_OPTS: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
       HOME: /data/graph_api
+    entrypoint:
+      - sh
+      - -c
+      - |
+        DB_FILE="$${GRAPH_API_DUCKDB_FILE:-finbench_sf0_1.duckdb}"
+        DB_PATH="/data/graph_api/$${DB_FILE}"
+        if [ ! -f "$${DB_PATH}" ]; then
+          echo "FinBench DuckDB file not found: $${DB_PATH}" >&2
+          echo "Prepare it with scripts/finbench-data.sh or copy data/finbench_sf0_1.duckdb before starting Docker." >&2
+          exit 1
+        fi
+        exec java $${JAVA_OPTS} -jar /app/app.jar
     volumes:
-      - graph_api_data:/data/graph_api
+      - ./data:/data/graph_api
     restart: unless-stopped
 
   neo4j:
