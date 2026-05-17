@@ -2,6 +2,7 @@ param(
     [string]$DbPath = "data/finbench_sf0_1.duckdb",
     [string]$Scale = "serious",
     [string]$Archive = "",
+    [string]$DatasetDir = "",
     [string]$Distro = ""
 )
 
@@ -13,6 +14,14 @@ function Resolve-RepoPath {
         return (Resolve-Path $Path).Path
     }
     return (Resolve-Path (Join-Path $RepoRoot $Path)).Path
+}
+
+function Get-RepoFullPath {
+    param([string]$Path)
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $Path))
 }
 
 function Convert-ToWslPath {
@@ -34,6 +43,19 @@ function Quote-Bash {
     return "'" + ($Value -replace "'", "'\''") + "'"
 }
 
+function Get-DefaultDatasetDir {
+    param([string]$ArchivePath)
+
+    $archiveName = [System.IO.Path]::GetFileNameWithoutExtension($ArchivePath).ToLowerInvariant()
+    if ($archiveName -eq "sf0.1") {
+        return "target/finbench/sf0.1"
+    }
+    if ($archiveName -eq "sf1") {
+        return "target/finbench/sf1"
+    }
+    return "target/finbench/sf1"
+}
+
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $RepoRoot
 
@@ -51,12 +73,18 @@ if ($Archive -eq "") {
     }
 }
 
+if ($DatasetDir -eq "") {
+    $DatasetDir = Get-DefaultDatasetDir $Archive
+}
+
 $DbDir = Split-Path (Join-Path $RepoRoot $DbPath) -Parent
 New-Item -ItemType Directory -Force -Path $DbDir | Out-Null
+New-Item -ItemType Directory -Force -Path (Get-RepoFullPath $DatasetDir) | Out-Null
 
 $RepoWsl = Convert-ToWslPath $RepoRoot
 $DbWsl = Convert-ToWslPath (Join-Path $RepoRoot $DbPath)
 $ArchiveWsl = Convert-ToWslPath (Resolve-RepoPath $Archive)
+$DatasetDirWsl = Convert-ToWslPath (Get-RepoFullPath $DatasetDir)
 
 $wslArgs = @()
 if ($Distro -ne "") {
@@ -79,11 +107,13 @@ $command = @(
     "BENCH_DB=$(Quote-Bash $DbWsl)",
     "BENCH_SCALE=$(Quote-Bash $Scale)",
     "FINBENCH_ARCHIVE=$(Quote-Bash $ArchiveWsl)",
+    "FINBENCH_DATASET_DIR=$(Quote-Bash $DatasetDirWsl)",
     "./scripts/finbench-data.sh"
 ) -join " "
 
 Write-Host "Preparing FinBench DuckDB via WSL..." -ForegroundColor Cyan
 Write-Host "Archive: $Archive"
+Write-Host "Dataset: $DatasetDir"
 Write-Host "Output:  $DbPath"
 & wsl @wslArgs bash -lc $command
 
@@ -93,4 +123,4 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "Done. Start the API with:" -ForegroundColor Green
-Write-Host "  GRAPH_API_PORT=18080 docker compose up --build -d"
+Write-Host "  .\scripts\finbench-docker.ps1 -SkipData"

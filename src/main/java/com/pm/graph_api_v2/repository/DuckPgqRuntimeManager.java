@@ -38,7 +38,7 @@ public class DuckPgqRuntimeManager {
         syncGraphState();
     }
 
-    public void syncGraphState() {
+    public synchronized void syncGraphState() {
         jdbcTemplate.execute((ConnectionCallback<Void>) connection -> {
             ensureDuckPgqLoaded(connection);
             if (duckPgqProperties.isSyncGraphStateOnStartup()) {
@@ -55,7 +55,7 @@ public class DuckPgqRuntimeManager {
         return jdbcTemplate.execute((ConnectionCallback<Boolean>) this::isDuckPgqLoaded);
     }
 
-    public void ensureGraphQueryReady(Connection connection) throws SQLException {
+    public synchronized void ensureGraphQueryReady(Connection connection) throws SQLException {
         ensureDuckPgqLoaded(connection);
         projectionManager.ensureGraphs(connection, VERTEX_LABEL, EDGE_LABEL);
     }

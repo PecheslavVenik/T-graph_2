@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: graph-api-v2
     ports:
-      - "${GRAPH_API_PORT:-8080}:8080"
+      - "${GRAPH_API_PORT:-18080}:8080"
     environment:
       GRAPH_API_DUCKDB_FILE: "${GRAPH_API_DUCKDB_FILE:-finbench_sf0_1.duckdb}"
       SPRING_DATASOURCE_URL: jdbc:duckdb:/data/graph_api/${GRAPH_API_DUCKDB_FILE:-finbench_sf0_1.duckdb}
@@ -28,7 +28,7 @@ services:
         DB_PATH="/data/graph_api/$${DB_FILE}"
         if [ ! -f "$${DB_PATH}" ]; then
           echo "FinBench DuckDB file not found: $${DB_PATH}" >&2
-          echo "Prepare it with scripts/finbench-data.sh or copy data/finbench_sf0_1.duckdb before starting Docker." >&2
+          echo "Prepare it with scripts/finbench-data.sh, scripts/finbench-data.ps1, or scripts/finbench-docker.ps1 before starting Docker." >&2
           exit 1
         fi
         exec java $${JAVA_OPTS} -jar /app/app.jar

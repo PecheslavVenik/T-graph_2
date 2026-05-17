@@ -81,7 +81,8 @@ public class GraphRecordSupport {
             return Map.of();
         }
 
-        String sql = "SELECT node_id, id_type, id_value FROM g_identifiers WHERE node_id IN (" + placeholders(nodeIds.size()) + ") ORDER BY node_id, id_type, id_value";
+        String sql = "SELECT node_id, id_type, id_value FROM g_identifiers WHERE node_id IN (" + placeholders(nodeIds.size()) + ") " +
+            "ORDER BY node_id, id_type, CASE WHEN id_value LIKE 'FINBENCH_%' THEN 0 ELSE 1 END, id_value";
 
         Map<String, Map<String, String>> identifiersByNodeId = new LinkedHashMap<>();
         jdbcTemplate.query(sql, rs -> {

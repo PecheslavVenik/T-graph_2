@@ -55,6 +55,22 @@ Stateless REST API для расследовательской графовой 
 docker compose up --build -d
 ```
 
+На Windows самый простой сценарий для фронтенда:
+```powershell
+.\scripts\finbench-docker.ps1
+```
+
+Он подготовит `data\finbench_sf0_1.duckdb`, поднимет Docker и дождется `health=UP`.
+Фронту после этого нужен backend URL:
+```text
+http://localhost:18080
+```
+
+Если база уже есть, но могла быть старой, пересоберите ее тем же скриптом:
+```powershell
+.\scripts\finbench-docker.ps1 -ForceData
+```
+
 Docker по умолчанию использует FinBench DuckDB-файл из локальной папки `./data`:
 `./data/finbench_sf0_1.duckdb` монтируется в контейнер как `/data/graph_api/finbench_sf0_1.duckdb`.
 Flyway в Docker-сценарии выключен, потому что FinBench-база должна быть уже подготовлена.
@@ -64,9 +80,14 @@ Flyway в Docker-сценарии выключен, потому что FinBench
 GRAPH_API_DUCKDB_FILE=finbench_smoke.duckdb docker compose up --build -d
 ```
 
-Если порт `8080` занят, поднимите API на другом host-порту:
+Если нужен другой host-порт, переопределите `GRAPH_API_PORT`:
 ```bash
-GRAPH_API_PORT=18080 docker compose up --build -d
+GRAPH_API_PORT=19080 docker compose up --build -d
+```
+
+По умолчанию Docker Compose уже публикует API на `18080`, чтобы не конфликтовать с локальными сервисами на `8080`. Если фронт использует Vite, обычно достаточно:
+```text
+VITE_API_BASE_URL=http://localhost:18080
 ```
 
 Если файл отсутствует, контейнер завершится с ошибкой вместо создания пустой DuckDB. Подготовка FinBench описана в `docs/finbench.md`.

@@ -188,7 +188,7 @@ BEGIN TRANSACTION;
 
 INSERT INTO g_nodes (
     node_id, node_type, display_name, party_rk, person_id, full_name, is_blacklist,
-    source_system, attrs_json, created_at, updated_at
+    city, source_system, attrs_json, created_at, updated_at
 )
 SELECT
     'FB_PERSON_' || id,
@@ -198,22 +198,39 @@ SELECT
     'FB_PERSON_ID_' || id,
     COALESCE(NULLIF(name, ''), 'FinBench Person ' || id),
     COALESCE(TRY_CAST(isBlocked AS BOOLEAN), FALSE),
+    NULLIF(city, ''),
     'finbench',
-    '{"benchmark":"LDBC FinBench","entity":"Person"}',
+    CAST(json_object(
+        'benchmark', 'LDBC FinBench',
+        'entity', 'Person',
+        'gender', NULLIF(gender, ''),
+        'birthday', NULLIF(birthday, ''),
+        'country', NULLIF(country, ''),
+        'city', NULLIF(city, '')
+    ) AS VARCHAR),
     to_timestamp(COALESCE(TRY_CAST(createTime AS DOUBLE), 0) / 1000.0),
     CURRENT_TIMESTAMP
 FROM fin_person;
 
 INSERT INTO g_nodes (
-    node_id, node_type, display_name, is_blacklist, source_system, attrs_json, created_at, updated_at
+    node_id, node_type, display_name, is_blacklist, city, source_system, attrs_json, created_at, updated_at
 )
 SELECT
     'FB_COMPANY_' || id,
     'COMPANY',
     COALESCE(NULLIF(name, ''), 'FinBench Company ' || id),
     COALESCE(TRY_CAST(isBlocked AS BOOLEAN), FALSE),
+    NULLIF(city, ''),
     'finbench',
-    '{"benchmark":"LDBC FinBench","entity":"Company"}',
+    CAST(json_object(
+        'benchmark', 'LDBC FinBench',
+        'entity', 'Company',
+        'country', NULLIF(country, ''),
+        'city', NULLIF(city, ''),
+        'business', NULLIF(business, ''),
+        'description', NULLIF(description, ''),
+        'url', NULLIF(url, '')
+    ) AS VARCHAR),
     to_timestamp(COALESCE(TRY_CAST(createTime AS DOUBLE), 0) / 1000.0),
     CURRENT_TIMESTAMP
 FROM fin_company;
@@ -228,7 +245,19 @@ SELECT
     NULLIF(phonenum, ''),
     COALESCE(TRY_CAST(isBlocked AS BOOLEAN), FALSE),
     'finbench',
-    '{"benchmark":"LDBC FinBench","entity":"Account"}',
+    CAST(json_object(
+        'benchmark', 'LDBC FinBench',
+        'entity', 'Account',
+        'type', NULLIF(type, ''),
+        'email', NULLIF(email, ''),
+        'freqLoginType', NULLIF(freqLoginType, ''),
+        'lastLoginTime', NULLIF(lastLoginTime, ''),
+        'accountLevel', TRY_CAST(accountLevel AS BIGINT),
+        'inDegree', TRY_CAST(inDegree AS BIGINT),
+        'OutDegree', TRY_CAST(OutDegree AS BIGINT),
+        'isExplicitDeleted', TRY_CAST(isExplicitDeleted AS BOOLEAN),
+        'Owner', NULLIF(Owner, '')
+    ) AS VARCHAR),
     to_timestamp(COALESCE(TRY_CAST(createTime AS DOUBLE), 0) / 1000.0),
     CURRENT_TIMESTAMP
 FROM fin_account;
@@ -241,7 +270,14 @@ SELECT
     'LOAN',
     'FinBench Loan ' || id,
     'finbench',
-    '{"benchmark":"LDBC FinBench","entity":"Loan"}',
+    CAST(json_object(
+        'benchmark', 'LDBC FinBench',
+        'entity', 'Loan',
+        'loanAmount', TRY_CAST(loanAmount AS DOUBLE),
+        'balance', TRY_CAST(balance AS DOUBLE),
+        'usage', NULLIF(usage, ''),
+        'interestRate', TRY_CAST(interestRate AS DOUBLE)
+    ) AS VARCHAR),
     to_timestamp(COALESCE(TRY_CAST(createTime AS DOUBLE), 0) / 1000.0),
     CURRENT_TIMESTAMP
 FROM fin_loan;
@@ -255,7 +291,13 @@ SELECT
     COALESCE(NULLIF(type, ''), 'FinBench Medium') || ' ' || id,
     COALESCE(TRY_CAST(isBlocked AS BOOLEAN), FALSE),
     'finbench',
-    '{"benchmark":"LDBC FinBench","entity":"Medium"}',
+    CAST(json_object(
+        'benchmark', 'LDBC FinBench',
+        'entity', 'Medium',
+        'type', NULLIF(type, ''),
+        'lastLogin', NULLIF(lastLogin, ''),
+        'riskLevel', NULLIF(riskLevel, '')
+    ) AS VARCHAR),
     to_timestamp(COALESCE(TRY_CAST(createTime AS DOUBLE), 0) / 1000.0),
     CURRENT_TIMESTAMP
 FROM fin_medium;

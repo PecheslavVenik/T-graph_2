@@ -43,7 +43,27 @@ target/bench-seeds/finbench.json
 
 Это нужно, потому что реальные IDs в официальном dataset заранее неизвестны. Runner читает seed file и подставляет реальные `node_id`, `party_rk`, `account_no` в workload cases.
 
+Содержательные поля из node-CSV сохраняются в `g_nodes.attrs_json`, чтобы не плодить отдельные колонки под каждый тип FinBench-сущности. Например, для `PERSON` сохраняются `gender`, `birthday`, `country`, `city`; для `ACCOUNT` - `type`, `email`, `freqLoginType`, `lastLoginTime`, `accountLevel`, `inDegree`, `OutDegree`, `isExplicitDeleted`, `Owner`; для `LOAN` - `loanAmount`, `balance`, `usage`, `interestRate`. Поле `city` дополнительно пишется в отдельную колонку для `PERSON` и `COMPANY`, потому что оно используется общим поиском и DTO-атрибутами.
+
 ## Быстрая проверка
+
+Windows: подготовить базу, поднять Docker и дождаться готового API:
+
+```powershell
+.\scripts\finbench-docker.ps1
+```
+
+Скрипт печатает готовый backend URL для фронта. По умолчанию это:
+
+```text
+http://localhost:18080
+```
+
+Если локальная база уже была создана старым importer'ом, пересоберите ее:
+
+```powershell
+.\scripts\finbench-docker.ps1 -ForceData
+```
 
 Windows/PowerShell через WSL:
 
@@ -51,7 +71,7 @@ Windows/PowerShell через WSL:
 .\scripts\finbench-data.ps1 -DbPath data\finbench_sf0_1.duckdb
 ```
 
-Скрипт ожидает архив `bench/sf0.1.tar` или `bench/sf1.tar` и установленный `duckdb` CLI внутри WSL.
+Скрипт ожидает архив `bench/sf0.1.tar` или `bench/sf1.tar` и установленный `duckdb` CLI внутри WSL. Для `sf0.1.tar` он автоматически использует `target/finbench/sf0.1`, чтобы путь к распакованному dataset совпадал с именем архива.
 
 Smoke import:
 
