@@ -202,6 +202,37 @@ curl -s -X POST "$BASE/graph/expand" \
   }'
 ```
 
+Expand with one-hop canvas context:
+```bash
+curl -s -X POST "$BASE/graph/expand" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "seeds":[{"type":"NODE_ID","value":"N_PARTY_1001"}],
+    "direction":"OUTBOUND",
+    "filters":{"relationFamilies":["CUSTOMER_OWNERSHIP"],"nodeTypes":["ACCOUNT"]},
+    "exclude":{"nodeIds":["N_PARTY_1001","N_ACC_2001"],"edgeIds":[]},
+    "maxNeighborsPerSeed":50,
+    "maxNodes":100,
+    "maxEdges":150,
+    "includeAttributes":true
+  }'
+```
+
+Expand preview with the same request body:
+```bash
+curl -s -X POST "$BASE/graph/expand/preview" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "seeds":[{"type":"NODE_ID","value":"N_PARTY_1001"}],
+    "direction":"OUTBOUND",
+    "filters":{"relationFamilies":["CUSTOMER_OWNERSHIP"]},
+    "exclude":{"nodeIds":["N_PARTY_1001","N_ACC_2001"],"edgeIds":[]},
+    "maxNeighborsPerSeed":50,
+    "maxNodes":100,
+    "maxEdges":150
+  }'
+```
+
 Shortest path:
 ```bash
 curl -s -X POST "$BASE/graph/shortest-path" \
@@ -384,11 +415,15 @@ java -jar app.jar
 - Для сценария `Start from file` фронт загружает CSV в `POST /graph/import/preview`, показывает counts/errors, затем по подтверждению пользователя отправляет тот же файл в `POST /graph/import/commit`
 - Перед `expand` можно дергать `GET /graph/node-summary?nodeId=...` и показывать пользователю сводку по клику на узел
 - `node-summary` возвращает общие counts по соседям, разбивку по `relationFamilies`, `edgeTypes`, `neighborNodeTypes` и признак, урежет ли узел дефолтный budget expand-а
+- `POST /graph/expand/preview` принимает тот же body, что и `expand`, и возвращает counts/facets уже с учетом `filters` и `exclude`
+- `filters.relationFamilies`/`filters.edgeTypes` имеют приоритет над legacy `relationFamily`/`edgeTypes`; дополнительно поддерживаются `nodeTypes`, `nodeAttributes`, `edgeAttributes`
+- `exclude.nodeIds` означает "ноды уже есть на холсте": они не возвращаются в `nodes[]` и не считаются как новые, но новые связи к ним возвращаются
+- `exclude.edgeIds` означает "связи уже есть на холсте": они исключаются и из preview, и из expand
 - `nodes[]` теперь могут нести `nodeType` и generic `identifiers`
 - `edges[]` теперь могут нести `relationFamily`, `sourceSystem`, `firstSeenAt`, `lastSeenAt`
 - `meta.source` приходит от активного backend-а: `DUCKPGQ` или `NEO4J`
 - `meta.relationFamily`, `meta.rankingStrategy`, `meta.candidateEdgeCount`, `meta.warnings` объясняют, как backend сузил результат
-- `expand` больше не принимает `existingGraph`: фронт сам досклеивает граф по стабильным `nodeId` и `edgeId`
+- `expand` не хранит серверное UI-состояние: фронт присылает локальный one-hop context через `exclude`, а backend возвращает только новые элементы относительно этого контекста
 - JSON/CSV/NDJSON export - backend responsibility; интерактивный HTML export - frontend responsibility, потому что он зависит от layout, pinning, hover, hide nodes и merge UI
 - Контрактные заглушки интеграции: `src/main/java/com/pm/graph_api_v2/integration`
 

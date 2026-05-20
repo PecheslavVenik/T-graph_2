@@ -5,10 +5,12 @@ import argparse
 import concurrent.futures
 import csv
 import datetime as dt
+import hashlib
 import json
 import math
 import os
 import pathlib
+import platform
 import statistics
 import subprocess
 import sys
@@ -83,7 +85,9 @@ def rounded(value: float | None, digits: int = 3) -> float | None:
 def http_call(method: str,
               url: str,
               body: str | None,
-              timeout_seconds: float) -> dict[str, Any]:
+              timeout_seconds: float,
+              request_index: int | None = None,
+              variant_index: int | None = None) -> dict[str, Any]:
     headers = {"Accept": "application/json"}
     data = None
     if body is not None:
@@ -119,6 +123,8 @@ def http_call(method: str,
             pass
 
     return {
+        "request_index": request_index,
+        "variant_index": variant_index,
         "elapsed_ms": elapsed_ms,
         "status": status,
         "app_ms": app_ms,
@@ -134,21 +140,30 @@ def is_healthy(base_url: str, timeout_seconds: float = 1.0) -> bool:
         return False
 
 
-def run_requests(method: str,
-                 url: str,
-                 body: str | None,
+def run_requests(request_variants: list[dict[str, Any]],
                  total: int,
                  concurrency: int,
-                 timeout_seconds: float) -> tuple[list[dict[str, Any]], float]:
+                 timeout_seconds: float,
+                 variant_offset: int = 0) -> tuple[list[dict[str, Any]], float]:
     if total <= 0:
         return [], 0.0
+    if not request_variants:
+        raise BenchmarkError("benchmark case has no request variants")
 
     started = time.perf_counter()
     workers = max(1, min(concurrency, total))
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [
-            executor.submit(http_call, method, url, body, timeout_seconds)
-            for _ in range(total)
+            executor.submit(
+                http_call,
+                str(request_variants[(variant_offset + index) % len(request_variants)]["method"]),
+                str(request_variants[(variant_offset + index) % len(request_variants)]["url"]),
+                request_variants[(variant_offset + index) % len(request_variants)].get("body"),
+                timeout_seconds,
+                index,
+                int(request_variants[(variant_offset + index) % len(request_variants)]["variant_index"]),
+            )
+            for index in range(total)
         ]
         samples = [future.result() for future in concurrent.futures.as_completed(futures)]
     wall_seconds = max(time.perf_counter() - started, 0.001)
@@ -209,10 +224,16 @@ def case_url(base_url: str, path: str) -> str:
 
 def write_raw_csv(path: pathlib.Path, samples: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=["elapsed_ms", "status", "app_ms", "error"])
+        writer = csv.DictWriter(
+            stream,
+            fieldnames=["iteration", "request_index", "variant_index", "elapsed_ms", "status", "app_ms", "error"],
+        )
         writer.writeheader()
         for sample in samples:
             writer.writerow({
+                "iteration": sample.get("iteration"),
+                "request_index": sample.get("request_index"),
+                "variant_index": sample.get("variant_index"),
                 "elapsed_ms": rounded(float(sample["elapsed_ms"]), 3),
                 "status": sample["status"],
                 "app_ms": sample.get("app_ms"),
@@ -220,38 +241,173 @@ def write_raw_csv(path: pathlib.Path, samples: list[dict[str, Any]]) -> None:
             })
 
 
+def prepare_request_variants(case_spec: dict[str, Any],
+                             base_variables: dict[str, str],
+                             case_variable_sets: list[dict[str, str]],
+                             base_url: str) -> list[dict[str, Any]]:
+    variants_source = case_variable_sets or [{}]
+    variants: list[dict[str, Any]] = []
+    for index, case_variables in enumerate(variants_source):
+        variables = dict(base_variables)
+        variables.update({str(key): str(value) for key, value in case_variables.items()})
+        rendered = substitute(case_spec, variables)
+        method = str(rendered.get("method", "GET")).upper()
+        body = rendered.get("body")
+        variants.append({
+            "variant_index": index,
+            "method": method,
+            "url": case_url(base_url, str(rendered["path"])),
+            "body": body.strip() if isinstance(body, str) else None,
+            "variables": case_variables,
+            "title": rendered.get("title"),
+            "benchmark_family": rendered.get("benchmark_family", ""),
+            "rendered": rendered,
+        })
+    return variants
+
+
+def t_critical_95(sample_count: int) -> float:
+    # Two-tailed t critical values for 95% confidence, indexed by degrees of freedom.
+    by_degrees_of_freedom = {
+        1: 12.706,
+        2: 4.303,
+        3: 3.182,
+        4: 2.776,
+        5: 2.571,
+        6: 2.447,
+        7: 2.365,
+        8: 2.306,
+        9: 2.262,
+        10: 2.228,
+        11: 2.201,
+        12: 2.179,
+        13: 2.160,
+        14: 2.145,
+        15: 2.131,
+        16: 2.120,
+        17: 2.110,
+        18: 2.101,
+        19: 2.093,
+        20: 2.086,
+        21: 2.080,
+        22: 2.074,
+        23: 2.069,
+        24: 2.064,
+        25: 2.060,
+        26: 2.056,
+        27: 2.052,
+        28: 2.048,
+        29: 2.045,
+        30: 2.042,
+    }
+    if sample_count <= 1:
+        return 0.0
+    return by_degrees_of_freedom.get(sample_count - 1, 1.960)
+
+
+def stats_with_ci(values: list[float]) -> dict[str, Any]:
+    if not values:
+        return {
+            "mean": None,
+            "stddev": None,
+            "cv_percent": None,
+            "ci95_low": None,
+            "ci95_high": None,
+            "ci95_half_width": None,
+        }
+    mean = statistics.fmean(values)
+    if len(values) == 1:
+        return {
+            "mean": rounded(mean),
+            "stddev": 0.0,
+            "cv_percent": 0.0,
+            "ci95_low": rounded(mean),
+            "ci95_high": rounded(mean),
+            "ci95_half_width": 0.0,
+        }
+    stddev = statistics.stdev(values)
+    half_width = t_critical_95(len(values)) * stddev / math.sqrt(len(values))
+    return {
+        "mean": rounded(mean),
+        "stddev": rounded(stddev),
+        "cv_percent": rounded((stddev / mean) * 100.0 if mean else 0.0, 2),
+        "ci95_low": rounded(max(0.0, mean - half_width)),
+        "ci95_high": rounded(mean + half_width),
+        "ci95_half_width": rounded(half_width),
+    }
+
+
+def add_iteration_statistics(summary: dict[str, Any], iteration_results: list[dict[str, Any]]) -> None:
+    rps_values = [
+        float(item["rps"])
+        for item in iteration_results
+        if item.get("rps") is not None and int(item.get("errors") or 0) == 0
+    ]
+    p95_values = [
+        float(item["p95_ms"])
+        for item in iteration_results
+        if item.get("p95_ms") is not None and int(item.get("errors") or 0) == 0
+    ]
+    summary["rps_iteration_stats"] = stats_with_ci(rps_values)
+    summary["p95_ms_iteration_stats"] = stats_with_ci(p95_values)
+    summary["rps_mean"] = summary["rps_iteration_stats"]["mean"]
+    summary["rps_cv_percent"] = summary["rps_iteration_stats"]["cv_percent"]
+    summary["rps_ci95_low"] = summary["rps_iteration_stats"]["ci95_low"]
+    summary["rps_ci95_high"] = summary["rps_iteration_stats"]["ci95_high"]
+
+
 def run_case(case_name: str,
              case_spec: dict[str, Any],
              variables: dict[str, str],
+             case_variable_sets: list[dict[str, str]],
              base_url: str,
              requests: int,
              concurrency: int,
              warmup: int,
+             iterations: int,
              timeout_seconds: float,
              raw_dir: pathlib.Path) -> dict[str, Any]:
-    rendered = substitute(case_spec, variables)
-    method = str(rendered.get("method", "GET")).upper()
-    url = case_url(base_url, str(rendered["path"]))
-    body = rendered.get("body")
-    if isinstance(body, str):
-        body = body.strip()
-    else:
-        body = None
+    request_variants = prepare_request_variants(case_spec, variables, case_variable_sets, base_url)
+    rendered = request_variants[0]["rendered"]
 
     if warmup > 0:
-        run_requests(method, url, body, warmup, concurrency, timeout_seconds)
+        run_requests(request_variants, warmup, concurrency, timeout_seconds)
 
-    samples, wall_seconds = run_requests(method, url, body, requests, concurrency, timeout_seconds)
+    samples: list[dict[str, Any]] = []
+    iteration_results: list[dict[str, Any]] = []
+    total_wall_seconds = 0.0
+    for iteration in range(1, max(1, iterations) + 1):
+        iteration_samples, wall_seconds = run_requests(
+            request_variants,
+            requests,
+            concurrency,
+            timeout_seconds,
+            variant_offset=(iteration - 1) * requests,
+        )
+        for sample in iteration_samples:
+            sample["iteration"] = iteration
+        iteration_summary = summarize_samples(iteration_samples, wall_seconds)
+        iteration_summary["iteration"] = iteration
+        iteration_results.append(iteration_summary)
+        samples.extend(iteration_samples)
+        total_wall_seconds += wall_seconds
+
     raw_path = raw_dir / f"{case_name}.csv"
     write_raw_csv(raw_path, samples)
 
-    summary = summarize_samples(samples, wall_seconds)
+    summary = summarize_samples(samples, max(total_wall_seconds, 0.001))
     summary.update({
         "case": case_name,
         "title": rendered.get("title", case_name),
         "benchmark_family": rendered.get("benchmark_family", ""),
         "raw_csv": str(raw_path.relative_to(raw_dir.parent)),
+        "iterations": iteration_results,
+        "iteration_count": len(iteration_results),
+        "variant_count": len(request_variants),
+        "variant_order": "deterministic_round_robin_with_iteration_offset",
+        "uses_seed_variants": bool(case_variable_sets),
     })
+    add_iteration_statistics(summary, iteration_results)
 
     weight = float(rendered.get("weight", 0.0))
     if weight > 0:
@@ -499,14 +655,14 @@ def prepare_dataset(workload: dict[str, Any],
     subprocess.run(["bash", "-lc", command], cwd=ROOT, env=env, check=True)
 
 
-def apply_seed_file(workload: dict[str, Any], variables: dict[str, str]) -> None:
+def load_seed_file(workload: dict[str, Any], variables: dict[str, str]) -> dict[str, Any]:
     seed_file = workload.get("dataset", {}).get("seed_file")
     if not seed_file:
-        return
+        return {}
 
     path = resolve_path(str(substitute(seed_file, variables)))
     if not path.exists():
-        return
+        return {"path": str(path), "loaded": False, "reason": "seed file does not exist"}
 
     with path.open("r", encoding="utf-8") as stream:
         seeds = json.load(stream)
@@ -514,8 +670,36 @@ def apply_seed_file(workload: dict[str, Any], variables: dict[str, str]) -> None
         raise BenchmarkError(f"seed_file must contain a JSON object: {path}")
 
     for key, value in seeds.items():
-        if value is not None:
+        if value is not None and not isinstance(value, (dict, list)):
             variables[str(key)] = str(value)
+    return {"path": str(path), "loaded": True, "content": seeds}
+
+
+def case_seed_variants(seed_data: dict[str, Any], case_name: str) -> list[dict[str, str]]:
+    content = seed_data.get("content")
+    if not isinstance(content, dict):
+        return []
+    case_variables = content.get("case_variables")
+    if not isinstance(case_variables, dict):
+        return []
+    entries = case_variables.get(case_name)
+    if entries is None:
+        entries = case_variables.get("*")
+    if not isinstance(entries, list):
+        return []
+
+    variants: list[dict[str, str]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        variant = {
+            str(key): str(value)
+            for key, value in entry.items()
+            if value is not None and not isinstance(value, (dict, list))
+        }
+        if variant:
+            variants.append(variant)
+    return variants
 
 
 def apply_seed_env_overrides(variables: dict[str, str]) -> None:
@@ -529,6 +713,129 @@ def apply_seed_env_overrides(variables: dict[str, str]) -> None:
     for key, env_name in seed_env.items():
         if env_name in os.environ:
             variables[key] = os.environ[env_name]
+
+
+def command_output(command: list[str], timeout_seconds: float = 5.0) -> str | None:
+    try:
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except Exception:  # noqa: BLE001 - provenance must not make the benchmark fail.
+        return None
+    output = ((result.stdout or "") + (result.stderr or "")).strip()
+    if result.returncode != 0:
+        return None
+    return output.splitlines()[0] if "\n" in output else output
+
+
+def command_output_full(command: list[str], timeout_seconds: float = 5.0) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except Exception:  # noqa: BLE001 - provenance must not make the benchmark fail.
+        return ""
+    return ((result.stdout or "") + (result.stderr or "")).strip()
+
+
+def file_fingerprint(path: pathlib.Path, hash_limit_bytes: int = 64 * 1024 * 1024) -> dict[str, Any]:
+    resolved = resolve_path(path)
+    if not resolved.exists():
+        return {"path": str(resolved), "exists": False}
+    stat = resolved.stat()
+    result: dict[str, Any] = {
+        "path": str(resolved),
+        "exists": True,
+        "size_bytes": stat.st_size,
+        "mtime_utc": dt.datetime.fromtimestamp(stat.st_mtime, dt.UTC).isoformat(timespec="seconds"),
+    }
+    if stat.st_size <= hash_limit_bytes or env_bool("BENCH_HASH_LARGE_FILES"):
+        digest = hashlib.sha256()
+        with resolved.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        result["sha256"] = digest.hexdigest()
+    else:
+        result["sha256"] = None
+        result["sha256_reason"] = f"file is larger than {hash_limit_bytes} bytes; set BENCH_HASH_LARGE_FILES=true to hash it"
+    return result
+
+
+def collect_provenance(workload_path: pathlib.Path,
+                       workload: dict[str, Any],
+                       backend_configs: list[dict[str, Any]],
+                       db_path: str,
+                       seed_data: dict[str, Any],
+                       case_names: list[str],
+                       args: argparse.Namespace) -> dict[str, Any]:
+    git_status = command_output_full(["git", "status", "--short"])
+    memory_bytes = command_output(["sysctl", "-n", "hw.memsize"])
+    cpu_model = command_output(["sysctl", "-n", "machdep.cpu.brand_string"])
+    backend_files = {
+        str(backend.get("id")): file_fingerprint(pathlib.Path(str(backend.get("_path"))), hash_limit_bytes=1024 * 1024)
+        for backend in backend_configs
+        if backend.get("_path")
+    }
+    seed_path = seed_data.get("path")
+    benchmark_cfg = workload.get("benchmark", {}) if isinstance(workload.get("benchmark"), dict) else {}
+    references_cfg = workload.get("references")
+    return {
+        "kind": "graph-api benchmark campaign",
+        "benchmark": benchmark_cfg,
+        "official_benchmark_run": bool(benchmark_cfg.get("official_run", False)),
+        "official_benchmark_note": (
+            benchmark_cfg.get("official_run_note")
+            or "FinBench-adapted API-level workload; not an audited LDBC FinBench driver run."
+        ),
+        "command_argv": sys.argv,
+        "cwd": str(ROOT),
+        "host": {
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+            "cpu_model": cpu_model,
+            "memory_bytes": int(memory_bytes) if memory_bytes and memory_bytes.isdigit() else memory_bytes,
+            "python": sys.version.split()[0],
+        },
+        "git": {
+            "commit": command_output(["git", "rev-parse", "HEAD"]),
+            "branch": command_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]),
+            "dirty": bool(git_status),
+            "status_short": git_status,
+        },
+        "tools": {
+            "java": command_output(["java", "-version"]),
+            "maven_wrapper": file_fingerprint(ROOT / "mvnw", hash_limit_bytes=1024 * 1024),
+            "docker": command_output(["docker", "--version"]),
+            "docker_compose": command_output(["docker", "compose", "version"]),
+            "duckdb": command_output(["duckdb", "--version"]),
+        },
+        "files": {
+            "workload": file_fingerprint(workload_path, hash_limit_bytes=1024 * 1024),
+            "dataset_db": file_fingerprint(pathlib.Path(db_path)),
+            "seed_file": file_fingerprint(pathlib.Path(seed_path), hash_limit_bytes=1024 * 1024) if seed_path else None,
+            "backend_configs": backend_files,
+        },
+        "selection": {
+            "cases": case_names,
+            "backends": [str(backend.get("id")) for backend in backend_configs],
+            "allow_existing": bool(args.allow_existing),
+        },
+        "references": references_cfg if isinstance(references_cfg, list) else [
+            {"name": "LDBC FinBench", "url": "https://ldbcouncil.org/benchmarks/finbench/"},
+            {"name": "LDBC FinBench specification", "url": "https://ldbcouncil.org/ldbc_finbench_docs/ldbc-finbench-specification.pdf"},
+        ],
+    }
 
 
 def compute_decision_score(result: dict[str, Any],
@@ -632,6 +939,12 @@ def evaluate_scientific_metric(result: dict[str, Any],
         "measured_operations": 0,
         "measured_wall_seconds": 0.0,
         "ops_per_second": 0.0,
+        "iteration_ops_per_second": [],
+        "ops_per_second_mean": None,
+        "ops_per_second_stddev": None,
+        "ops_per_second_cv_percent": None,
+        "ops_per_second_ci95_low": None,
+        "ops_per_second_ci95_high": None,
         "score": 0.0,
     }
     reasons = metric["validity_reasons"]
@@ -671,6 +984,51 @@ def evaluate_scientific_metric(result: dict[str, Any],
 
     if not included_cases:
         reasons.append("scientific_score.include_cases is empty")
+
+    iteration_indexes: set[int] | None = None
+    iterations_by_case: dict[str, dict[int, dict[str, Any]]] = {}
+    for case_name in included_cases:
+        case = cases.get(case_name)
+        if case is None:
+            continue
+        by_iteration = {
+            int(item.get("iteration")): item
+            for item in case.get("iterations", [])
+            if isinstance(item, dict) and item.get("iteration") is not None
+        }
+        iterations_by_case[case_name] = by_iteration
+        indexes = set(by_iteration)
+        iteration_indexes = indexes if iteration_indexes is None else iteration_indexes & indexes
+
+    iteration_ops: list[float] = []
+    for iteration in sorted(iteration_indexes or set()):
+        iteration_reasons: list[str] = []
+        measured_operations = 0
+        measured_wall_seconds = 0.0
+        for case_name in included_cases:
+            case_iteration = iterations_by_case.get(case_name, {}).get(iteration)
+            if case_iteration is None:
+                iteration_reasons.append(f"case {case_name} has no iteration {iteration}")
+                continue
+            errors = int(case_iteration.get("errors") or 0)
+            ok = int(case_iteration.get("ok") or 0)
+            wall_seconds = float(case_iteration.get("wall_seconds") or 0.0)
+            if errors > 0 or ok <= 0 or wall_seconds <= 0:
+                iteration_reasons.append(f"case {case_name} iteration {iteration} is invalid")
+                continue
+            measured_operations += ok
+            measured_wall_seconds += wall_seconds
+        if not iteration_reasons and measured_operations > 0 and measured_wall_seconds > 0:
+            iteration_ops.append(measured_operations / measured_wall_seconds)
+
+    if iteration_ops:
+        stats = stats_with_ci(iteration_ops)
+        metric["iteration_ops_per_second"] = [rounded(value) for value in iteration_ops]
+        metric["ops_per_second_mean"] = stats["mean"]
+        metric["ops_per_second_stddev"] = stats["stddev"]
+        metric["ops_per_second_cv_percent"] = stats["cv_percent"]
+        metric["ops_per_second_ci95_low"] = stats["ci95_low"]
+        metric["ops_per_second_ci95_high"] = stats["ci95_high"]
 
     if not reasons and metric["measured_operations"] > 0 and metric["measured_wall_seconds"] > 0:
         metric["valid"] = True
@@ -748,7 +1106,19 @@ def write_summary(output_dir: pathlib.Path, run: dict[str, Any]) -> pathlib.Path
     lines.append("")
     lines.append(f"- run_id: `{run['run_id']}`")
     lines.append(f"- dataset: `{run['dataset']['db_path']}` / scale `{run['dataset']['scale']}`")
-    lines.append(f"- requests: `{run['runner']['requests']}`, concurrency: `{run['runner']['concurrency']}`, warmup: `{run['runner']['warmup']}`")
+    lines.append(
+        f"- requests: `{run['runner']['requests']}`, iterations: `{run['runner']['iterations']}`, "
+        f"concurrency: `{run['runner']['concurrency']}`, warmup: `{run['runner']['warmup']}`"
+    )
+    provenance = run.get("provenance", {})
+    git = provenance.get("git", {}) if isinstance(provenance, dict) else {}
+    host = provenance.get("host", {}) if isinstance(provenance, dict) else {}
+    if git:
+        lines.append(
+            f"- git: `{git.get('commit', 'n/a')}` branch `{git.get('branch', 'n/a')}`, dirty=`{git.get('dirty', 'n/a')}`"
+        )
+    if host:
+        lines.append(f"- host: `{host.get('cpu_model') or host.get('processor') or host.get('machine')}` / `{host.get('platform')}`")
     if scientific_leader:
         lines.append(
             "- scientific leader: `{backend}` with `{ops}` ops/s (`scientific_score={score}`)".format(
@@ -768,6 +1138,7 @@ def write_summary(output_dir: pathlib.Path, run: dict[str, Any]) -> pathlib.Path
     lines.append("")
     lines.append("- metric: `equal_operation_throughput_ops_per_second`")
     lines.append("- formula: `sum(successful included operations) / sum(measured case wall seconds)`")
+    lines.append("- repeated-run statistics: per-iteration transaction mix mean, 95% confidence interval and coefficient of variation")
     lines.append("- validity: `status=ok`, every included case executed, `errors=0`, positive throughput")
     lines.append("- included_cases: `" + " ".join(scientific_cfg.get("include_cases", [])) + "`")
     if scientific_cfg.get("description"):
@@ -776,20 +1147,26 @@ def write_summary(output_dir: pathlib.Path, run: dict[str, Any]) -> pathlib.Path
 
     lines.append("## Backend Scores")
     lines.append("")
-    lines.append("| backend | adapter | status | scientific_valid | scientific_ops/s | scientific_score | decision_score | startup_s | startup_score | log |")
-    lines.append("| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |")
+    lines.append("| backend | adapter | status | scientific_valid | scientific_ops/s | iter_mean_ops/s | ci95_ops/s | cv_% | scientific_score | decision_score | startup_s | log |")
+    lines.append("| --- | --- | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |")
     for backend in run["backends"]:
+        scientific = backend.get("scientific", {})
+        ci_low = scientific.get("ops_per_second_ci95_low")
+        ci_high = scientific.get("ops_per_second_ci95_high")
+        ci_text = "n/a" if ci_low is None or ci_high is None else f"{markdown_value(ci_low)}..{markdown_value(ci_high)}"
         lines.append(
-            "| {id} | {adapter} | {status} | {scientific_valid} | {scientific_ops} | {scientific_score} | {decision_score} | {startup} | {startup_score} | {log} |".format(
+            "| {id} | {adapter} | {status} | {scientific_valid} | {scientific_ops} | {scientific_mean} | {ci95} | {cv} | {scientific_score} | {decision_score} | {startup} | {log} |".format(
                 id=backend["backend"]["id"],
                 adapter=backend["backend"].get("adapter_status", "implemented"),
                 status=backend.get("status"),
                 scientific_valid=markdown_value(backend.get("scientific_valid")),
                 scientific_ops=markdown_value(backend.get("scientific_ops_per_second")),
+                scientific_mean=markdown_value(scientific.get("ops_per_second_mean")),
+                ci95=ci_text,
+                cv=markdown_value(scientific.get("ops_per_second_cv_percent")),
                 scientific_score=markdown_value(backend.get("scientific_score")),
                 decision_score=markdown_value(backend.get("decision_score")),
                 startup=markdown_value(backend.get("startup_seconds")),
-                startup_score=markdown_value(backend.get("startup_score")),
                 log=backend.get("log", "n/a"),
             )
         )
@@ -850,18 +1227,21 @@ def write_summary(output_dir: pathlib.Path, run: dict[str, Any]) -> pathlib.Path
 
     lines.append("## Case Results")
     lines.append("")
-    lines.append("| backend | case | family | ok | errors | rps | avg_ms | p95_ms | p99_ms | app_p95_ms | decision_score |")
-    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    lines.append("| backend | case | family | variants | iterations | ok | errors | rps | rps_cv_% | avg_ms | p95_ms | p99_ms | app_p95_ms | decision_score |")
+    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for backend in run["backends"]:
         for case in backend.get("cases", []):
             lines.append(
-                "| {backend} | {case} | {family} | {ok} | {errors} | {rps} | {avg} | {p95} | {p99} | {app_p95} | {score} |".format(
+                "| {backend} | {case} | {family} | {variants} | {iterations} | {ok} | {errors} | {rps} | {rps_cv} | {avg} | {p95} | {p99} | {app_p95} | {score} |".format(
                     backend=backend["backend"]["id"],
                     case=case["case"],
                     family=case.get("benchmark_family", ""),
+                    variants=markdown_value(case.get("variant_count")),
+                    iterations=markdown_value(case.get("iteration_count")),
                     ok=case["ok"],
                     errors=case["errors"],
                     rps=markdown_value(case["rps"]),
+                    rps_cv=markdown_value(case.get("rps_cv_percent")),
                     avg=markdown_value(case["avg_ms"]),
                     p95=markdown_value(case["p95_ms"]),
                     p99=markdown_value(case["p99_ms"]),
@@ -879,12 +1259,38 @@ def write_summary(output_dir: pathlib.Path, run: dict[str, Any]) -> pathlib.Path
             lines.append(f"- `{backend['backend']['id']}`: {backend.get('error')}")
         lines.append("")
 
+    if provenance:
+        lines.append("## Benchmark Provenance")
+        lines.append("")
+        files = provenance.get("files", {}) if isinstance(provenance, dict) else {}
+        dataset_file = files.get("dataset_db", {}) if isinstance(files, dict) else {}
+        seed_file = files.get("seed_file", {}) if isinstance(files, dict) else {}
+        lines.append(f"- official_benchmark_run: `{provenance.get('official_benchmark_run')}`")
+        lines.append(f"- note: {provenance.get('official_benchmark_note')}")
+        if dataset_file:
+            lines.append(
+                "- dataset_db_size_bytes: `{size}`, dataset_db_sha256: `{sha}`".format(
+                    size=markdown_value(dataset_file.get("size_bytes")),
+                    sha=markdown_value(dataset_file.get("sha256")),
+                )
+            )
+        if seed_file:
+            lines.append(
+                "- seed_file: `{path}`, sha256: `{sha}`".format(
+                    path=seed_file.get("path"),
+                    sha=markdown_value(seed_file.get("sha256")),
+                )
+            )
+        lines.append("- raw_samples: `raw/<backend>/<case>.csv` contains every measured request with iteration and seed variant index")
+        lines.append("")
+
     lines.append("## Interpretation Rules")
     lines.append("")
     lines.append("- Scientific ranking uses throughput of the predeclared included transaction cases after validity gates; it does not use SLO weights.")
     lines.append("- `scientific_score` is only normalization against the best valid backend in this run; the primary value is `scientific_ops/s`.")
     lines.append("- `decision_score` is an expert-defined utility function for product trade-offs, weighted by TOML case weights and p95 SLOs.")
     lines.append("- Raw p50/p95/p99/rps/errors are the primary benchmark facts; weighted decision score is not an official LDBC metric.")
+    lines.append("- Multiple seed variants are taken from the prepared dataset when `case_variables` exist in the seed file; they are not handwritten per backend.")
     lines.append("- Decision score sensitivity profiles re-weight the same raw case scores to show how much the product ranking depends on subjective priorities.")
     lines.append("- Startup/projection sync is scored separately from HTTP latency.")
     lines.append("- A backend with errors is penalized even if successful requests are fast.")
@@ -898,11 +1304,17 @@ def write_results(output_dir: pathlib.Path, run: dict[str, Any]) -> None:
         json.dumps(run, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    (output_dir / "manifest.json").write_text(
+        json.dumps(run.get("provenance", {}), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     with (output_dir / "cases.csv").open("w", newline="", encoding="utf-8") as stream:
         fieldnames = [
             "backend", "case", "ok", "errors", "rps", "avg_ms", "p50_ms", "p95_ms",
-            "p99_ms", "min_ms", "max_ms", "app_p95_ms", "wall_seconds", "score", "decision_score",
+            "p99_ms", "min_ms", "max_ms", "app_p95_ms", "wall_seconds", "iteration_count",
+            "variant_count", "rps_mean", "rps_cv_percent", "rps_ci95_low", "rps_ci95_high",
+            "score", "decision_score",
         ]
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
         writer.writeheader()
@@ -912,6 +1324,35 @@ def write_results(output_dir: pathlib.Path, run: dict[str, Any]) -> None:
                 row["backend"] = backend["backend"]["id"]
                 row["decision_score"] = case.get("score")
                 writer.writerow(row)
+
+    with (output_dir / "backend-summary.csv").open("w", newline="", encoding="utf-8") as stream:
+        fieldnames = [
+            "backend", "status", "scientific_valid", "scientific_ops_per_second",
+            "scientific_ops_per_second_mean", "scientific_ops_per_second_stddev",
+            "scientific_ops_per_second_cv_percent", "scientific_ops_per_second_ci95_low",
+            "scientific_ops_per_second_ci95_high", "scientific_score", "decision_score",
+            "startup_seconds", "total_wall_seconds", "error",
+        ]
+        writer = csv.DictWriter(stream, fieldnames=fieldnames)
+        writer.writeheader()
+        for backend in run["backends"]:
+            scientific = backend.get("scientific", {})
+            writer.writerow({
+                "backend": backend["backend"]["id"],
+                "status": backend.get("status"),
+                "scientific_valid": backend.get("scientific_valid"),
+                "scientific_ops_per_second": backend.get("scientific_ops_per_second"),
+                "scientific_ops_per_second_mean": scientific.get("ops_per_second_mean"),
+                "scientific_ops_per_second_stddev": scientific.get("ops_per_second_stddev"),
+                "scientific_ops_per_second_cv_percent": scientific.get("ops_per_second_cv_percent"),
+                "scientific_ops_per_second_ci95_low": scientific.get("ops_per_second_ci95_low"),
+                "scientific_ops_per_second_ci95_high": scientific.get("ops_per_second_ci95_high"),
+                "scientific_score": backend.get("scientific_score"),
+                "decision_score": backend.get("decision_score"),
+                "startup_seconds": backend.get("startup_seconds"),
+                "total_wall_seconds": backend.get("total_wall_seconds"),
+                "error": backend.get("error"),
+            })
 
 
 def parse_args() -> argparse.Namespace:
@@ -924,6 +1365,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--requests", type=int, default=int(os.environ["BENCH_REQUESTS"]) if os.environ.get("BENCH_REQUESTS") else None)
     parser.add_argument("--concurrency", type=int, default=int(os.environ["BENCH_CONCURRENCY"]) if os.environ.get("BENCH_CONCURRENCY") else None)
     parser.add_argument("--warmup", type=int, default=int(os.environ["BENCH_WARMUP"]) if os.environ.get("BENCH_WARMUP") else None)
+    parser.add_argument("--iterations", type=int, default=int(os.environ["BENCH_ITERATIONS"]) if os.environ.get("BENCH_ITERATIONS") else None)
     parser.add_argument("--timeout-seconds", type=float, default=float(os.environ["BENCH_CURL_MAX_TIME"]) if os.environ.get("BENCH_CURL_MAX_TIME") else None)
     parser.add_argument("--app-port", type=int, default=int(os.environ["BENCH_APP_PORT"]) if os.environ.get("BENCH_APP_PORT") else None)
     parser.add_argument("--db-path", default=os.environ.get("BENCH_DB"))
@@ -931,6 +1373,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default=os.environ.get("BENCH_LOG_DIR", "target/bench"))
     parser.add_argument("--allow-existing", action="store_true", default=env_bool("BENCH_ALLOW_EXISTING"))
     parser.add_argument("--fail-on-slo", action="store_true", default=env_bool("BENCH_FAIL_ON_SLO"))
+    parser.add_argument("--require-all-backends", action="store_true", default=env_bool("BENCH_REQUIRE_ALL_BACKENDS"))
     parser.add_argument("--list-backends", action="store_true", help="List backend configs and exit.")
     return parser.parse_args()
 
@@ -967,6 +1410,7 @@ def main() -> int:
     requests = args.requests or int(runner_cfg.get("requests", 100))
     concurrency = args.concurrency or int(runner_cfg.get("concurrency", 1))
     warmup = args.warmup if args.warmup is not None else int(runner_cfg.get("warmup", 10))
+    iterations = args.iterations or int(runner_cfg.get("iterations", 1))
     timeout_seconds = args.timeout_seconds or float(runner_cfg.get("timeout_seconds", 30))
 
     case_names = parse_list(args.cases) or list(workload.get("default_cases", []))
@@ -988,7 +1432,9 @@ def main() -> int:
     if not resolve_path(db_path).exists():
         raise BenchmarkError(f"benchmark DB does not exist: {db_path}. Run with --prepare-data first.")
 
-    apply_seed_file(workload, variables)
+    seed_data = load_seed_file(workload, variables)
+    if bool(dataset.get("seed_file_required", False)) and not seed_data.get("loaded"):
+        raise BenchmarkError(f"required seed file was not loaded: {seed_data.get('path')}")
     apply_seed_env_overrides(variables)
 
     run_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -1011,6 +1457,7 @@ def main() -> int:
         },
         "runner": {
             "requests": requests,
+            "iterations": iterations,
             "concurrency": concurrency,
             "warmup": warmup,
             "timeout_seconds": timeout_seconds,
@@ -1018,6 +1465,8 @@ def main() -> int:
         },
         "score_profiles": workload.get("score_profiles", {}),
         "variables": variables,
+        "seed_data": seed_data,
+        "provenance": collect_provenance(workload_path, workload, backends, db_path, seed_data, case_names, args),
         "backends": [],
     }
 
@@ -1066,10 +1515,12 @@ def main() -> int:
                     case_name,
                     cases_by_name[case_name],
                     variables,
+                    case_seed_variants(seed_data, case_name),
                     base_url,
                     requests,
                     concurrency,
                     warmup,
+                    iterations,
                     timeout_seconds,
                     backend_raw_dir,
                 )
@@ -1109,10 +1560,13 @@ def main() -> int:
     print(f"\nResults: {summary_path}", flush=True)
     for backend in run["backends"]:
         print(
-            "{backend}: status={status} scientific_ops/s={ops} scientific_score={scientific_score} decision_score={decision_score}".format(
+            "{backend}: status={status} scientific_ops/s={ops} iter_mean={mean} ci95={low}..{high} scientific_score={scientific_score} decision_score={decision_score}".format(
                 backend=backend["backend"]["id"],
                 status=backend["status"],
                 ops=markdown_value(backend.get("scientific_ops_per_second")),
+                mean=markdown_value(backend.get("scientific", {}).get("ops_per_second_mean")),
+                low=markdown_value(backend.get("scientific", {}).get("ops_per_second_ci95_low")),
+                high=markdown_value(backend.get("scientific", {}).get("ops_per_second_ci95_high")),
                 scientific_score=markdown_value(backend.get("scientific_score")),
                 decision_score=markdown_value(backend.get("decision_score")),
             ),
@@ -1121,6 +1575,11 @@ def main() -> int:
 
     if not any(backend.get("status") == "ok" for backend in run["backends"]):
         return 1
+    if args.require_all_backends and any(
+        backend.get("status") != "ok" or not backend.get("scientific", {}).get("valid")
+        for backend in run["backends"]
+    ):
+        return 3
 
     if args.fail_on_slo:
         failed_slo = any(

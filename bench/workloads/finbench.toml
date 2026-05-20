@@ -16,13 +16,30 @@ generator = "./scripts/finbench-data.sh"
 db_path = "data/finbench_sf1.duckdb"
 scale = "sf1"
 seed_file = "target/bench-seeds/finbench.json"
+seed_file_required = true
 
 [runner]
 requests = 300
 concurrency = 8
 warmup = 30
+iterations = 3
 timeout_seconds = 30
 app_port = 8080
+
+[benchmark]
+canonical_name = "LDBC FinBench"
+mode = "adapted-api-level"
+official_run = false
+official_run_note = "This workload maps FinBench-generated graph data to the project API and reports reproducible API-level results. It is not an audited LDBC FinBench driver run."
+primary_metric = "equal_operation_throughput_ops_per_second"
+
+[[references]]
+name = "LDBC FinBench benchmark"
+url = "https://ldbcouncil.org/benchmarks/finbench/"
+
+[[references]]
+name = "LDBC FinBench specification"
+url = "https://ldbcouncil.org/ldbc_finbench_docs/ldbc-finbench-specification.pdf"
 
 [scientific_score]
 description = "FinBench-adapted equal-operation transaction throughput. Control and metadata endpoints are excluded from the primary metric."
@@ -34,10 +51,10 @@ include_cases = [
 ]
 
 [seeds]
-party_rk = "FINBENCH_PARTY_0000001"
-target_party_rk = "FINBENCH_PARTY_0000004"
-account_no = "FINBENCH_ACCOUNT_HUB_0000001"
-node_id = "FB_PERSON_SEED_FROM_DATASET"
+party_rk = "__loaded_from_target_bench_seeds_finbench_json__"
+target_party_rk = "__loaded_from_target_bench_seeds_finbench_json__"
+account_no = "__loaded_from_target_bench_seeds_finbench_json__"
+node_id = "__loaded_from_target_bench_seeds_finbench_json__"
 path_relation_family = "PERSON_GUARANTEE_PERSON"
 
 [startup_slo]

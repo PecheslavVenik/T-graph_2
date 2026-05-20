@@ -10,6 +10,8 @@
 
 Главное правило: если в тексте нужно обосновать "какая СУБД быстрее", использовать `scientific_ops_per_second`. Если нужно обосновать "какая СУБД лучше подходит продукту с учетом latency SLO, startup и UX", можно обсуждать `decision_score`, но только как вторичную инженерную интерпретацию.
 
+Важное уточнение для исследовательского отчета: итоговая таблица должна строиться только из одного `benchmark campaign` - одного запуска runner-а, который породил общий `run.json`, `manifest.json`, `backend-summary.csv`, `cases.csv` и raw CSV. Ручное объединение нескольких прогонов допустимо только как diagnostic note, но не как финальный ranking.
+
 ## Внешние опоры
 
 Такой подход ближе к классическим benchmark rules, чем один субъективный weighted score:
@@ -64,6 +66,28 @@ finbench_shortest_guarantee_path
 - metric выражена в понятных единицах: successful operations per second.
 
 Так как runner отправляет одинаковое число measured requests на каждый included case, формула эквивалентна equal-operation transaction mix: каждый тип операции представлен одинаковым количеством операций. Если позже появится официальный или доменный transaction mix, его надо добавить отдельным workload-ом и явно указать ratios.
+
+## Повторения и доверительные интервалы
+
+Runner поддерживает `runner.iterations` / `BENCH_ITERATIONS`. Для каждого case сохраняется:
+
+- aggregate latency по всем measured samples;
+- per-iteration `rps`;
+- mean/stddev/CV по итерациям;
+- 95% confidence interval для repeated-run throughput.
+
+В summary это отображается как `iter_mean_ops/s`, `ci95_ops/s` и `cv_%`. Если `cv_%` высокий или confidence intervals перекрываются, вывод "СУБД A быстрее СУБД B" нужно формулировать осторожнее: как минимум требуется больше итераций или более длинный measured interval.
+
+## Seed policy
+
+Для FinBench workload seed-ы не должны быть вписаны вручную под конкретный backend. `scripts/finbench-data.sh` загружает FinBench CSV в универсальную модель, а `scripts/finbench-seeds.py` выбирает request parameter sets из уже существующих `source_system='finbench'` nodes/edges:
+
+- node-summary seed-ы берутся из реальных person nodes с высокой incident degree;
+- person-expand seed-ы берутся из реальных `PERSON_GUARANTEE_PERSON` источников;
+- account-flow seed-ы берутся из реальных accounts с большим outgoing `ACCOUNT_FLOW`;
+- shortest-path seed-ы берутся из реальных person guarantee paths глубины `2..4`.
+
+Скрипт не добавляет synthetic control edges. Если подходящих seed-ов нет, подготовка должна падать с ошибкой, а не дорисовывать граф.
 
 ## Validity gate
 

@@ -1,6 +1,10 @@
 # FinBench SF0.1 Benchmark Results, 2026-04-28
 
-Документ фиксирует воспроизводимый прогон LDBC FinBench-inspired workload на локальной машине в рамках `graph_api_v2`.
+> Статус: diagnostic / superseded.
+>
+> Эти числа полезны как отладочный снимок после доведения backend-ов до рабочего состояния, но их нельзя использовать как финальный research-ranking без повторного единого campaign-run. Причина: итоговая таблица была сведена из нескольких валидных прогонов после последовательных фиксов backend-ов. Для защиты использовать новый pipeline из `scripts/bench-runner.py`: один запуск, один `run.json`, один `manifest.json`, seed-ы из датасета, повторения, confidence intervals и raw samples.
+
+Документ фиксирует исторический прогон LDBC FinBench-inspired workload на локальной машине в рамках `graph_api_v2`.
 
 ## Что запускалось
 

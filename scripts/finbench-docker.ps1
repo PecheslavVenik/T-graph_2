@@ -122,9 +122,17 @@ Invoke-Checked "docker" $composeArgs
 $baseUrl = "http://localhost:$Port"
 Wait-Health $baseUrl
 
-$seedUrl = "$baseUrl/api/v1/graph/nodes/search?query=FINBENCH_PARTY_0000001&limit=1"
-$seed = Invoke-RestMethod -Uri $seedUrl -TimeoutSec 10
-$node = @($seed.nodes)[0]
+$SeedFile = Get-RepoFullPath "target/bench-seeds/finbench.json"
+$node = $null
+if (Test-Path $SeedFile) {
+    $seedJson = Get-Content -Raw -Path $SeedFile | ConvertFrom-Json
+    if ($null -ne $seedJson.party_rk -and $seedJson.party_rk -ne "") {
+        $seedQuery = [uri]::EscapeDataString([string]$seedJson.party_rk)
+        $seedUrl = "$baseUrl/api/v1/graph/nodes/search?query=$seedQuery&limit=1"
+        $seed = Invoke-RestMethod -Uri $seedUrl -TimeoutSec 10
+        $node = @($seed.nodes)[0]
+    }
+}
 $attributeKeys = ""
 if ($null -ne $node -and $null -ne $node.attributes) {
     $attributeKeys = (($node.attributes.PSObject.Properties | Select-Object -ExpandProperty Name) -join ", ")

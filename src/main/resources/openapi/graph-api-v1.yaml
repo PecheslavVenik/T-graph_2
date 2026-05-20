@@ -24,6 +24,24 @@ paths:
                 $ref: '#/components/schemas/GraphExpandResponse'
         '503':
           description: DuckPGQ is required but unavailable
+  /graph/expand/preview:
+    post:
+      summary: Preview smart 1-hop expansion with the same filters and exclude context as expand
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GraphExpandRequest'
+      responses:
+        '200':
+          description: Expansion preview for UI counters and facets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphExpandPreviewResponse'
+        '503':
+          description: DuckPGQ is required but unavailable
   /graph/shortest-path:
     post:
       summary: Find shortest path between two nodes inside relation family
@@ -250,6 +268,10 @@ components:
           maxItems: 100
           items:
             type: string
+        filters:
+          $ref: '#/components/schemas/GraphExpandFilters'
+        exclude:
+          $ref: '#/components/schemas/GraphExpandExclude'
         direction:
           $ref: '#/components/schemas/Direction'
         maxNeighborsPerSeed:
@@ -280,6 +302,110 @@ components:
             $ref: '#/components/schemas/GraphEdge'
         meta:
           $ref: '#/components/schemas/GraphMeta'
+    GraphExpandFilters:
+      type: object
+      properties:
+        relationFamilies:
+          type: array
+          maxItems: 100
+          description: Takes priority over legacy relationFamily.
+          items:
+            $ref: '#/components/schemas/GraphRelationFamily'
+        edgeTypes:
+          type: array
+          maxItems: 100
+          description: Takes priority over legacy edgeTypes.
+          items:
+            type: string
+        nodeTypes:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+        nodeAttributes:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/GraphAttributeFilter'
+        edgeAttributes:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/GraphAttributeFilter'
+    GraphAttributeFilter:
+      type: object
+      properties:
+        eq: {}
+        in:
+          type: array
+          items: {}
+        gte:
+          type: number
+        lte:
+          type: number
+    GraphExpandExclude:
+      type: object
+      properties:
+        nodeIds:
+          type: array
+          maxItems: 5000
+          description: Existing canvas nodes. They are not returned in nodes[] or counted as new nodes, but new edges to them are allowed.
+          items:
+            type: string
+        edgeIds:
+          type: array
+          maxItems: 5000
+          description: Existing canvas edges. They are excluded from preview and expand results.
+          items:
+            type: string
+    GraphExpandPreviewResponse:
+      type: object
+      required: [summary, facets, expandPreview]
+      properties:
+        summary:
+          $ref: '#/components/schemas/GraphExpandPreviewSummary'
+        facets:
+          $ref: '#/components/schemas/GraphExpandFacets'
+        expandPreview:
+          $ref: '#/components/schemas/GraphExpandPreview'
+    GraphExpandPreviewSummary:
+      type: object
+      required: [adjacentEdgeCount, uniqueNeighborCount, newNodeCount, newEdgeCount]
+      properties:
+        adjacentEdgeCount:
+          type: integer
+        uniqueNeighborCount:
+          type: integer
+        newNodeCount:
+          type: integer
+        newEdgeCount:
+          type: integer
+    GraphExpandFacets:
+      type: object
+      required: [relationFamilies, edgeTypes, neighborNodeTypes, nodeAttributes, edgeAttributes]
+      properties:
+        relationFamilies:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphFacetCount'
+        edgeTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphFacetCount'
+        neighborNodeTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphFacetCount'
+        nodeAttributes:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: '#/components/schemas/GraphFacetCount'
+        edgeAttributes:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: '#/components/schemas/GraphFacetCount'
     GraphQueryRequest:
       type: object
       required: [sql]

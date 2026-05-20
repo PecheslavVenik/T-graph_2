@@ -13,6 +13,8 @@ public record GraphExpandRequest(
     @NotEmpty @Size(max = 100) List<@Valid SeedRef> seeds,
     String relationFamily,
     @Size(max = 100) List<@NotEmpty String> edgeTypes,
+    @Valid GraphExpandFiltersDto filters,
+    @Valid GraphExpandExcludeDto exclude,
     @NotNull Direction direction,
     @Min(1) @Max(1000) Integer maxNeighborsPerSeed,
     @Min(1) @Max(1000) Integer maxNodes,

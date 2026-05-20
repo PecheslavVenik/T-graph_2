@@ -25,6 +25,8 @@ Runner не запускает `adapter_required` backend-и и помечает
 
 ## Быстрый запуск
 
+Для FinBench research-run с официальным/выгруженным FinBench archive используйте подробный runbook в `docs/finbench.md`, раздел "Канонический запуск без хардкода". Коротко: данные готовятся `scripts/finbench-data.sh`, итоговый campaign запускается `scripts/finbench-suite.sh --require-all-backends`, финальная таблица берется только из одного `target/finbench-*/<run_id>/`.
+
 Подготовить production-like синтетический AML-граф:
 
 ```bash
@@ -66,8 +68,10 @@ make bench-suite
 
 - `summary.md` - основной отчет и текущий лидер.
 - `run.json` - машинно-читаемый полный результат.
+- `manifest.json` - provenance: commit, dirty status, host/tool versions, workload/backend config fingerprints.
+- `backend-summary.csv` - итоговые backend metrics.
 - `cases.csv` - сводная таблица по cases.
-- `raw/<backend>/<case>.csv` - сырые latency/status samples.
+- `raw/<backend>/<case>.csv` - сырые latency/status samples с `iteration`, `request_index`, `variant_index`.
 - `app-<backend>.log` - startup/sync log приложения.
 
 ## Датасеты
@@ -114,7 +118,7 @@ make bench-data
 
 Primary ranking теперь строится по `scientific_ops_per_second`: это throughput на заранее объявленных transaction cases после validity gate. Эта метрика не использует веса, SLO и startup penalty, поэтому ее нельзя подкрутить под DuckDB или другую конкретную СУБД.
 
-`scientific_score` - только нормализация внутри одного прогона: `100 * backend_ops_per_second / best_ops_per_second`.
+`scientific_score` - только нормализация внутри одного campaign-run: `100 * backend_ops_per_second / best_ops_per_second`.
 
 `decision_score` - вторичная инженерная оценка для выбора под production API. Она использует p95/SLO/weights и поэтому должна трактоваться как subjective utility score, а не как научный benchmark score.
 
@@ -129,7 +133,9 @@ Workload также может иметь `[scientific_score]`:
 - `include_cases` - cases, которые входят в primary throughput metric;
 - `description` - почему выбран именно этот transaction set.
 
-Объективные факты benchmark-а - это `scientific_ops_per_second`, `p50_ms`, `p95_ms`, `p99_ms`, `rps`, `errors`, `startup_seconds` и raw CSV samples. `decision_score` нужен только как decision aid поверх этих фактов.
+Объективные факты benchmark-а - это `scientific_ops_per_second`, per-iteration mean/CI/CV, `p50_ms`, `p95_ms`, `p99_ms`, `rps`, `errors`, `startup_seconds`, `manifest.json` и raw CSV samples. `decision_score` нужен только как decision aid поверх этих фактов.
+
+Финальный исследовательский ranking нельзя собирать руками из нескольких директорий `target/bench-*`. Один вывод - один campaign-run, один `run.json`, один `backend-summary.csv`.
 
 Startup/projection sync считается отдельным SLO через `[startup_slo]`. Это важно: например, Neo4j может быстро отвечать после импорта, но дорогой startup sync тоже является частью стоимости технологии.
 

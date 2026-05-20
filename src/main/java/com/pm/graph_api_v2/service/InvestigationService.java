@@ -3,6 +3,7 @@ package com.pm.graph_api_v2.service;
 import com.pm.graph_api_v2.dto.Direction;
 import com.pm.graph_api_v2.dto.GraphDictionaryResponse;
 import com.pm.graph_api_v2.dto.GraphExpandRequest;
+import com.pm.graph_api_v2.dto.GraphExpandPreviewResponse;
 import com.pm.graph_api_v2.dto.GraphExpandResponse;
 import com.pm.graph_api_v2.dto.GraphExportFormat;
 import com.pm.graph_api_v2.dto.GraphExportRequest;
@@ -44,6 +45,10 @@ public class InvestigationService {
 
     public GraphExpandResponse expand(GraphExpandRequest request) {
         return graphExpansionService.expand(request);
+    }
+
+    public GraphExpandPreviewResponse expandPreview(GraphExpandRequest request) {
+        return graphExpansionService.preview(request);
     }
 
     public ShortestPathResponse shortestPath(ShortestPathRequest request) {

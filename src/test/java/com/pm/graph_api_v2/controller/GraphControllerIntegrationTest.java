@@ -68,6 +68,197 @@ class GraphControllerIntegrationTest {
     }
 
     @Test
+    void expand_shouldExcludeKnownNodesFromNodesButReturnNewEdgesToThem() throws Exception {
+        String payload = """
+            {
+              "seeds": [
+                {"type": "NODE_ID", "value": "N_PARTY_1001"}
+              ],
+              "direction": "OUTBOUND",
+              "filters": {
+                "relationFamilies": ["CUSTOMER_OWNERSHIP"]
+              },
+              "exclude": {
+                "nodeIds": ["N_PARTY_1001", "N_ACC_2001"],
+                "edgeIds": []
+              },
+              "maxNeighborsPerSeed": 50,
+              "maxNodes": 100,
+              "maxEdges": 100
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/expand")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.nodes.length()").value(0))
+            .andExpect(jsonPath("$.edges.length()").value(1))
+            .andExpect(jsonPath("$.edges[0].edgeId").value("E_OWNS_1001_2001"))
+            .andExpect(jsonPath("$.edges[0].toNodeId").value("N_ACC_2001"));
+    }
+
+    @Test
+    void expandPreview_shouldUseSameExcludeAndFilterContract() throws Exception {
+        String payload = """
+            {
+              "seeds": [
+                {"type": "NODE_ID", "value": "N_PARTY_1001"}
+              ],
+              "direction": "OUTBOUND",
+              "filters": {
+                "relationFamilies": ["CUSTOMER_OWNERSHIP"],
+                "nodeTypes": ["ACCOUNT"]
+              },
+              "exclude": {
+                "nodeIds": ["N_PARTY_1001", "N_ACC_2001"],
+                "edgeIds": []
+              },
+              "maxNeighborsPerSeed": 50,
+              "maxNodes": 100,
+              "maxEdges": 100
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/expand/preview")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.summary.adjacentEdgeCount").value(1))
+            .andExpect(jsonPath("$.summary.uniqueNeighborCount").value(1))
+            .andExpect(jsonPath("$.summary.newNodeCount").value(0))
+            .andExpect(jsonPath("$.summary.newEdgeCount").value(1))
+            .andExpect(jsonPath("$.facets.relationFamilies[0].key").value("CUSTOMER_OWNERSHIP"))
+            .andExpect(jsonPath("$.facets.edgeTypes[0].key").value("OWNS"))
+            .andExpect(jsonPath("$.facets.neighborNodeTypes[0].key").value("ACCOUNT"))
+            .andExpect(jsonPath("$.expandPreview.wouldTruncateByNeighborBudget").value(false));
+    }
+
+    @Test
+    void expand_shouldExcludeKnownEdgesFromResult() throws Exception {
+        String payload = """
+            {
+              "seeds": [
+                {"type": "NODE_ID", "value": "N_PARTY_1001"}
+              ],
+              "direction": "OUTBOUND",
+              "filters": {
+                "relationFamilies": ["CUSTOMER_OWNERSHIP"]
+              },
+              "exclude": {
+                "nodeIds": ["N_PARTY_1001", "N_ACC_2001"],
+                "edgeIds": ["E_OWNS_1001_2001"]
+              },
+              "maxNeighborsPerSeed": 50,
+              "maxNodes": 100,
+              "maxEdges": 100
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/expand")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.nodes.length()").value(0))
+            .andExpect(jsonPath("$.edges.length()").value(0));
+    }
+
+    @Test
+    void expand_shouldSupportMultipleRelationFamilies() throws Exception {
+        String payload = """
+            {
+              "seeds": [
+                {"type": "NODE_ID", "value": "N_PARTY_1001"}
+              ],
+              "direction": "OUTBOUND",
+              "filters": {
+                "relationFamilies": ["CUSTOMER_OWNERSHIP", "CORPORATE_CONTROL"]
+              },
+              "exclude": {
+                "nodeIds": ["N_PARTY_1001"],
+                "edgeIds": []
+              },
+              "maxNeighborsPerSeed": 50,
+              "maxNodes": 100,
+              "maxEdges": 100
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/expand")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.nodes.length()").value(2))
+            .andExpect(jsonPath("$.edges.length()").value(2))
+            .andExpect(jsonPath("$.edges[*].relationFamily", hasItem("CUSTOMER_OWNERSHIP")))
+            .andExpect(jsonPath("$.edges[*].relationFamily", hasItem("CORPORATE_CONTROL")));
+    }
+
+    @Test
+    void expand_shouldApplyNodeAndEdgeAttributeFilters() throws Exception {
+        String nodeAttributePayload = """
+            {
+              "seeds": [
+                {"type": "NODE_ID", "value": "N_PARTY_1002"}
+              ],
+              "direction": "OUTBOUND",
+              "filters": {
+                "relationFamilies": ["PERSON_KNOWS_PERSON"],
+                "nodeAttributes": {
+                  "city": {"eq": "Khabarovsk"}
+                }
+              },
+              "exclude": {
+                "nodeIds": ["N_PARTY_1002"],
+                "edgeIds": []
+              },
+              "maxNeighborsPerSeed": 50,
+              "maxNodes": 100,
+              "maxEdges": 100
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/expand")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(nodeAttributePayload))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.nodes.length()").value(1))
+            .andExpect(jsonPath("$.nodes[0].nodeId").value("N_PARTY_1003"))
+            .andExpect(jsonPath("$.edges.length()").value(1));
+
+        String edgeAttributePayload = """
+            {
+              "seeds": [
+                {"type": "NODE_ID", "value": "N_ACC_2001"}
+              ],
+              "direction": "OUTBOUND",
+              "filters": {
+                "relationFamilies": ["ACCOUNT_FLOW"],
+                "edgeAttributes": {
+                  "amount": {"gte": 100000, "lte": 130000}
+                }
+              },
+              "exclude": {
+                "nodeIds": ["N_ACC_2001"],
+                "edgeIds": []
+              },
+              "maxNeighborsPerSeed": 50,
+              "maxNodes": 100,
+              "maxEdges": 100
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/expand")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(edgeAttributePayload))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.nodes.length()").value(1))
+            .andExpect(jsonPath("$.nodes[0].nodeId").value("N_ACC_2002"))
+            .andExpect(jsonPath("$.edges.length()").value(1))
+            .andExpect(jsonPath("$.edges[0].edgeId").value("E_TRANS_2001_2002"));
+    }
+
+    @Test
     void expand_withoutRelationFamily_shouldUseConfiguredDefault() throws Exception {
         String payload = """
             {

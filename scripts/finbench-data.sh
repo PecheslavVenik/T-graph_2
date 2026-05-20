@@ -624,78 +624,6 @@ WHERE EXISTS (SELECT 1 FROM g_nodes n WHERE n.node_id = 'FB_COMPANY_' || investo
   AND EXISTS (SELECT 1 FROM g_nodes n WHERE n.node_id = 'FB_COMPANY_' || companyId)
   AND investorId <> companyId;
 
-CREATE OR REPLACE TEMP TABLE fin_person_anchor AS
-SELECT node_id, row_number() OVER (ORDER BY node_id) AS rn
-FROM g_nodes
-WHERE source_system = 'finbench' AND node_type = 'PERSON'
-ORDER BY node_id
-LIMIT 4;
-
-UPDATE g_nodes
-SET party_rk = 'FINBENCH_PARTY_' || lpad(CAST(a.rn AS VARCHAR), 7, '0')
-FROM fin_person_anchor a
-WHERE g_nodes.node_id = a.node_id;
-
-INSERT OR IGNORE INTO g_identifiers (node_id, id_type, id_value)
-SELECT
-    node_id,
-    'PARTY_RK',
-    'FINBENCH_PARTY_' || lpad(CAST(rn AS VARCHAR), 7, '0')
-FROM fin_person_anchor;
-
-INSERT OR IGNORE INTO g_edges (
-    edge_id, from_node_id, to_node_id, edge_type, directed, tx_count, tx_sum,
-    relation_family, strength_score, evidence_count, source_system, first_seen_at, last_seen_at, attrs_json
-)
-SELECT
-    'E_FIN_CONTROL_PERSON_PATH_' || CAST(a.rn AS VARCHAR) || '_' || CAST(b.rn AS VARCHAR),
-    a.node_id,
-    b.node_id,
-    'GUARANTEES',
-    FALSE,
-    0,
-    0,
-    'PERSON_GUARANTEE_PERSON',
-    0.99,
-    1,
-    'finbench_control',
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP,
-    '{"benchmark":"LDBC FinBench","relation":"controlPath"}'
-FROM fin_person_anchor a
-JOIN fin_person_anchor b ON b.rn = a.rn + 1;
-
-CREATE OR REPLACE TEMP TABLE fin_account_hub AS
-SELECT node_id
-FROM (
-    SELECT 'FB_ACCOUNT_' || fromId AS node_id, COUNT(*) AS edge_count
-    FROM fin_transfer
-    GROUP BY fromId
-    ORDER BY edge_count DESC, fromId
-    LIMIT 1
-)
-WHERE EXISTS (SELECT 1 FROM g_nodes n WHERE n.node_id = node_id)
-UNION ALL
-SELECT node_id
-FROM g_nodes
-WHERE source_system = 'finbench' AND node_type = 'ACCOUNT'
-  AND NOT EXISTS (
-      SELECT 1
-      FROM (
-          SELECT 'FB_ACCOUNT_' || fromId AS node_id
-          FROM fin_transfer
-          GROUP BY fromId
-          LIMIT 1
-      ) candidate
-      WHERE EXISTS (SELECT 1 FROM g_nodes n WHERE n.node_id = candidate.node_id)
-  )
-ORDER BY node_id
-LIMIT 1;
-
-INSERT OR IGNORE INTO g_identifiers (node_id, id_type, id_value)
-SELECT node_id, 'ACCOUNT_NO', 'FINBENCH_ACCOUNT_HUB_0000001'
-FROM fin_account_hub;
-
 COMMIT;
 
 ANALYZE;
@@ -707,35 +635,5 @@ UNION ALL
 SELECT 'finbench_identifiers', COUNT(*) FROM g_identifiers WHERE node_id LIKE 'FB_%';
 SQL
 
-NODE_ID="$(
-  duckdb "$DB_PATH" -noheader -csv -c "
-    SELECT node_id
-    FROM g_nodes
-    WHERE party_rk = 'FINBENCH_PARTY_0000001'
-    LIMIT 1;
-  " | tr -d '\r'
-)"
-
-ACCOUNT_NODE_ID="$(
-  duckdb "$DB_PATH" -noheader -csv -c "
-    SELECT node_id
-    FROM g_identifiers
-    WHERE id_type = 'ACCOUNT_NO' AND id_value = 'FINBENCH_ACCOUNT_HUB_0000001'
-    LIMIT 1;
-  " | tr -d '\r'
-)"
-
-cat > "$SEED_FILE" <<JSON
-{
-  "party_rk": "FINBENCH_PARTY_0000001",
-  "target_party_rk": "FINBENCH_PARTY_0000004",
-  "account_no": "FINBENCH_ACCOUNT_HUB_0000001",
-  "node_id": "$NODE_ID",
-  "account_node_id": "$ACCOUNT_NODE_ID",
-  "path_relation_family": "PERSON_GUARANTEE_PERSON"
-}
-JSON
-
 echo
-echo "FinBench seed values written to $SEED_FILE:"
-cat "$SEED_FILE"
+python3 scripts/finbench-seeds.py "$DB_PATH" "$SEED_FILE" "${FINBENCH_SEED_SAMPLE_LIMIT:-32}"

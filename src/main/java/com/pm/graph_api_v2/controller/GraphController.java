@@ -3,6 +3,7 @@ package com.pm.graph_api_v2.controller;
 import com.pm.graph_api_v2.dto.Direction;
 import com.pm.graph_api_v2.dto.GraphDictionaryResponse;
 import com.pm.graph_api_v2.dto.GraphExpandRequest;
+import com.pm.graph_api_v2.dto.GraphExpandPreviewResponse;
 import com.pm.graph_api_v2.dto.GraphExpandResponse;
 import com.pm.graph_api_v2.dto.GraphExportFormat;
 import com.pm.graph_api_v2.dto.GraphExportRequest;
@@ -43,6 +44,11 @@ public class GraphController {
     @PostMapping("/expand")
     public GraphExpandResponse expand(@Valid @RequestBody GraphExpandRequest request) {
         return investigationService.expand(request);
+    }
+
+    @PostMapping("/expand/preview")
+    public GraphExpandPreviewResponse expandPreview(@Valid @RequestBody GraphExpandRequest request) {
+        return investigationService.expandPreview(request);
     }
 
     @PostMapping("/shortest-path")

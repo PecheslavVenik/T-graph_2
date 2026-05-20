@@ -16,9 +16,11 @@ scripts/finbench-suite.sh
 bench/workloads/finbench.toml
 ```
 
+Пояснение сути эксперимента, primary metric и устройства SF-базы: `docs/benchmark-experiment-and-sf-dataset.md`.
+
 ## Что делает importer
 
-`scripts/finbench-data.sh` берет официальный `bench/sf1.tar`, распаковывает его в `target/finbench/sf1`, читает `sf1/raw/*/part-*.csv` и маппит FinBench entities в универсальную модель проекта:
+`scripts/finbench-data.sh` берет FinBench archive (`bench/sf0.1.tar`, `bench/sf1.tar` или путь из `FINBENCH_ARCHIVE`), распаковывает его в `target/finbench/<scale>`, читает `raw/*/part-*.csv` и маппит FinBench entities в универсальную модель проекта:
 
 | FinBench | graph-api model |
 |---|---|
@@ -35,13 +37,21 @@ bench/workloads/finbench.toml
 | `personGuarantee`, `companyGuarantee` | guarantee edges |
 | `personInvest`, `companyInvest` | `INVESTMENT` edges |
 
-Importer также пишет seed file:
+Importer также пишет seed file через `scripts/finbench-seeds.py`:
 
 ```text
 target/bench-seeds/finbench.json
 ```
 
-Это нужно, потому что реальные IDs в официальном dataset заранее неизвестны. Runner читает seed file и подставляет реальные `node_id`, `party_rk`, `account_no` в workload cases.
+Это нужно, потому что реальные IDs в dataset заранее неизвестны. Runner читает seed file и подставляет реальные `node_id`, `party_rk`, `account_no` в workload cases. В seed file лежит не один зашитый ID, а `case_variables`: наборы параметров для каждого case, выбранные из реальных `source_system='finbench'` nodes/edges.
+
+Seed policy:
+
+- `finbench_node_summary` - real person nodes с высокой incident degree;
+- `finbench_person_expand` - real persons, у которых есть `PERSON_GUARANTEE_PERSON`;
+- `finbench_account_flow_hub` - real accounts с высоким outgoing `ACCOUNT_FLOW`;
+- `finbench_shortest_guarantee_path` - real person guarantee paths глубины `2..4`;
+- synthetic control edges не добавляются. Если подходящих seed-ов нет, подготовка падает с ошибкой.
 
 Содержательные поля из node-CSV сохраняются в `g_nodes.attrs_json`, чтобы не плодить отдельные колонки под каждый тип FinBench-сущности. Например, для `PERSON` сохраняются `gender`, `birthday`, `country`, `city`; для `ACCOUNT` - `type`, `email`, `freqLoginType`, `lastLoginTime`, `accountLevel`, `inDegree`, `OutDegree`, `isExplicitDeleted`, `Owner`; для `LOAN` - `loanAmount`, `balance`, `usage`, `interestRate`. Поле `city` дополнительно пишется в отдельную колонку для `PERSON` и `COMPANY`, потому что оно используется общим поиском и DTO-атрибутами.
 
@@ -138,8 +148,10 @@ BENCH_SCALE=sf1 \
 BENCH_REQUESTS=300 \
 BENCH_WARMUP=30 \
 BENCH_CONCURRENCY=8 \
+BENCH_ITERATIONS=3 \
 BENCH_LOG_DIR=target/finbench-sf1 \
 ./scripts/finbench-suite.sh \
+  --require-all-backends \
   --backend duckpgq \
   --backend neo4j \
   --backend memgraph \
@@ -149,14 +161,122 @@ BENCH_LOG_DIR=target/finbench-sf1 \
   --backend janusgraph
 ```
 
+## Канонический запуск без хардкода
+
+Для research-результата используйте один command path: `scripts/finbench-data.sh` готовит dataset и seed file, `scripts/finbench-suite.sh` запускает один benchmark campaign. Не редактируйте Python/Bash-скрипты под конкретный backend и не вписывайте seed ID вручную.
+
+### 1. Подготовить dataset и seed file
+
+Для текущего локального `sf0.1` archive:
+
+```bash
+BENCH_DB=data/finbench_sf0_1.duckdb \
+BENCH_SCALE=sf0.1 \
+FINBENCH_ARCHIVE=bench/sf0.1.tar \
+FINBENCH_DATASET_DIR=target/finbench/sf0.1 \
+FINBENCH_SEED_SAMPLE_LIMIT=32 \
+./scripts/finbench-data.sh
+```
+
+Что здесь настраивается:
+
+- `BENCH_DB` - куда положить canonical DuckDB dataset;
+- `BENCH_SCALE` - label масштаба в артефактах;
+- `FINBENCH_ARCHIVE` - какой FinBench archive использовать;
+- `FINBENCH_DATASET_DIR` - куда распакован/будет распакован archive;
+- `FINBENCH_SEED_SAMPLE_LIMIT` - сколько real seed variants выбрать на case.
+
+После этого должен появиться:
+
+```text
+target/bench-seeds/finbench.json
+```
+
+Этот файл генерируется из реальных `source_system='finbench'` данных. Его не надо править руками для результата.
+
+### 2. Запустить один полный campaign-run
+
+```bash
+BENCH_DB=data/finbench_sf0_1.duckdb \
+BENCH_SCALE=sf0.1 \
+GRAPH_KUZU_PATH=target/kuzu-finbench-sf0.1-campaign \
+BENCH_REQUESTS=300 \
+BENCH_WARMUP=30 \
+BENCH_CONCURRENCY=8 \
+BENCH_ITERATIONS=3 \
+BENCH_LOG_DIR=target/finbench-sf0.1-campaign \
+./scripts/finbench-suite.sh --require-all-backends
+```
+
+Почему без `--backend`: список backend-ов уже объявлен в `bench/workloads/finbench.toml` как `default_backends`. Так меньше риска случайно забыть кандидата или собрать итог из разных запусков. Для smoke/debug можно запускать `--backend duckpgq`, но это не финальный ranking.
+
+`--require-all-backends` нужен для research-run: команда завершится ошибкой, если хотя бы один backend не прошел scientific validity gate. Это лучше, чем молча получить неполную таблицу.
+
+### 3. Где смотреть результат
+
+Итог лежит в:
+
+```text
+target/finbench-sf0.1-campaign/<run_id>/
+```
+
+Минимальный набор файлов для отчета:
+
+- `summary.md` - человекочитаемый итог;
+- `run.json` - полный машинный результат;
+- `manifest.json` - commit, dirty status, host/tool versions, dataset/backend/workload fingerprints;
+- `backend-summary.csv` - итоговая таблица по backend-ам;
+- `cases.csv` - per-case aggregates;
+- `raw/<backend>/<case>.csv` - каждый measured request.
+
+Финальный вывод можно делать только из этих файлов одного `<run_id>`.
+
+### 4. Что можно менять без хардкода
+
+Разрешенные knobs:
+
+- env-переменные `BENCH_DB`, `BENCH_SCALE`, `FINBENCH_ARCHIVE`, `FINBENCH_DATASET_DIR`;
+- runner knobs `BENCH_REQUESTS`, `BENCH_WARMUP`, `BENCH_CONCURRENCY`, `BENCH_ITERATIONS`, `BENCH_LOG_DIR`;
+- backend list через `bench/workloads/finbench.toml`, если это новая версия workload-а;
+- backend configs в `bench/backends/*.toml`;
+- Java adapter implementation для новой СУБД.
+
+Запрещено для финального research-run:
+
+- править `target/bench-seeds/finbench.json` руками;
+- менять workload/cases между backend-ами;
+- запускать разные backend-и отдельными командами и потом склеивать таблицу;
+- использовать `--allow-existing`, потому что состояние уже запущенного приложения/проекции не гарантирует clean start;
+- добавлять synthetic edges, чтобы конкретный case "точно проходил";
+- менять API limits или request body под конкретную СУБД.
+
+### 5. Как понять, что прогон годится
+
+В `summary.md` и `backend-summary.csv` должно быть:
+
+- все backend-и имеют `status=ok`;
+- все backend-и имеют `scientific_valid=True`;
+- included scientific cases имеют `errors=0`;
+- `manifest.json` показывает один и тот же workload/dataset для всего campaign;
+- `cv_%` и `ci95_ops/s` позволяют объяснить, насколько устойчива разница.
+
 ## Важные оговорки
 
-Это не сертифицированный официальный LDBC audit run. Это practical FinBench-adapted workload: официальный FinBench SF1 dataset загружается в модель проекта и прогоняется через единый HTTP API, чтобы выбрать backend для конкретной системы.
+Это не сертифицированный официальный LDBC audit run. Это practical FinBench-adapted workload: FinBench dataset загружается в модель проекта и прогоняется через единый HTTP API, чтобы выбрать backend для конкретной системы.
+
+Финальный research-ranking должен быть взят из одного полного campaign-run, а не из ручного объединения нескольких прогонов. Минимальный набор артефактов для отчета:
+
+- `summary.md` - человекочитаемый итог;
+- `run.json` - полный машинный результат;
+- `manifest.json` - provenance: git commit, dirty status, host/tool versions, workload/backend config fingerprints;
+- `backend-summary.csv` - итоговые метрики по backend-ам;
+- `cases.csv` - агрегаты по case-ам;
+- `raw/<backend>/<case>.csv` - каждый measured request с `iteration` и `variant_index`.
 
 Для research-обоснования правильная формулировка:
 
 ```text
-The evaluation uses an LDBC FinBench dataset mapped to the application's universal graph model and runs a FinBench-inspired transaction workload through the production API layer.
+The evaluation uses an LDBC FinBench dataset mapped to the application's universal graph model and runs a FinBench-adapted transaction workload through the production API layer.
 ```
 
 ## Scoring
