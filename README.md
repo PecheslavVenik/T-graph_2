@@ -6,6 +6,7 @@ Stateless REST API для расследовательской графовой 
 
 ## Что умеет API
 - `POST /api/v1/graph/expand` - умное 1-hop расширение для расследовательского графа с анти-hub ранжированием
+- `GET /api/v1/graph/full` - полный вывод всей canonical graph database для frontend canvas
 - `POST /api/v1/graph/shortest-path` - кратчайший путь (minimum hops) внутри выбранного relation family
 - `POST /api/v1/graph/query` - старт расследования с безопасного read-only SQL-запроса
 - `POST /api/v1/graph/import/preview` и `/import/commit` - импорт CSV с нодами/ребрами в canonical graph
@@ -22,6 +23,7 @@ Stateless REST API для расследовательской графовой 
 - В seed-данных по-прежнему есть расследовательские семьи `PERSON_KNOWS_PERSON`, `PERSON_RELATIVE_PERSON`, `PERSON_SAME_CITY_PERSON`
 - Контракт уже поддерживает и generic AML families: `ACCOUNT_FLOW`, `CUSTOMER_OWNERSHIP`, `SHARED_INFRASTRUCTURE`, `CORPORATE_CONTROL`
 - Backend сам ограничивает первый экран графа: candidate budget, top-K по seed, global node/edge budget, hub suppression
+- Полный вывод всей базы через `GET /graph/full` не требует seed и не режет результат лимитами; frontend получает все `g_nodes` и `g_edges`
 
 ## Архитектура (кратко)
 - `GraphController` - HTTP слой
@@ -185,6 +187,11 @@ curl -s -X POST "$BASE/graph/expand" \
     "maxEdges":150,
     "includeAttributes":true
   }'
+```
+
+Full database graph for frontend:
+```bash
+curl -s "$BASE/graph/full?includeAttributes=true"
 ```
 
 Expand by account seed:
@@ -413,6 +420,7 @@ java -jar app.jar
 - Для ручной опорной ноды фронт может дергать `GET /graph/nodes/search?query=...`, показывать найденные `nodes[]`, а выбранный результат передавать в `expand` как seed `{ "type": "NODE_ID", "value": nodeId }`
 - Для сценария `Start from query` фронт может дергать `POST /graph/query`: `SEEDS` ожидает SQL с `node_id` и затем расширяет найденные seed-ноды, `GRAPH` ожидает `node_id`, `edge_id` или `source`/`target` и возвращает готовый срез графа
 - Для сценария `Start from file` фронт загружает CSV в `POST /graph/import/preview`, показывает counts/errors, затем по подтверждению пользователя отправляет тот же файл в `POST /graph/import/commit`
+- Для сценария "показать всю базу" фронт дергает `GET /graph/full?includeAttributes=true`: backend возвращает все узлы и все ребра canonical graph без seed-ов и лимитов
 - Перед `expand` можно дергать `GET /graph/node-summary?nodeId=...` и показывать пользователю сводку по клику на узел
 - `node-summary` возвращает общие counts по соседям, разбивку по `relationFamilies`, `edgeTypes`, `neighborNodeTypes` и признак, урежет ли узел дефолтный budget expand-а
 - `POST /graph/expand/preview` принимает тот же body, что и `expand`, и возвращает counts/facets уже с учетом `filters` и `exclude`

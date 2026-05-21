@@ -6,6 +6,9 @@ GET {{baseUrl}}/actuator/health
 ### Dictionary
 GET {{baseUrl}}/api/v1/graph/dictionary
 
+### Full database graph for frontend canvas
+GET {{baseUrl}}/api/v1/graph/full?includeAttributes=true
+
 ### Node summary before expand
 GET {{baseUrl}}/api/v1/graph/node-summary?nodeId=N_PARTY_1001
 

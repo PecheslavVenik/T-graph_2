@@ -68,6 +68,27 @@ class GraphControllerIntegrationTest {
     }
 
     @Test
+    void fullGraph_shouldReturnEntireCanonicalDatabase() throws Exception {
+        mockMvc.perform(get("/api/v1/graph/full")
+                .param("includeAttributes", "false"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.nodes.length()").value(8))
+            .andExpect(jsonPath("$.edges.length()").value(10))
+            .andExpect(jsonPath("$.nodes[*].nodeId", hasItem("N_PARTY_1001")))
+            .andExpect(jsonPath("$.nodes[*].nodeId", hasItem("N_ACC_2001")))
+            .andExpect(jsonPath("$.nodes[*].nodeId", hasItem("N_COMP_3001")))
+            .andExpect(jsonPath("$.nodes[*].nodeId", hasItem("N_DEV_4001")))
+            .andExpect(jsonPath("$.edges[*].edgeId", hasItem("E_TX_1001_1002")))
+            .andExpect(jsonPath("$.edges[*].edgeId", hasItem("E_CITY_1002_1004")))
+            .andExpect(jsonPath("$.edges[*].edgeId", hasItem("E_BENEFICIAL_1001_3001")))
+            .andExpect(jsonPath("$.meta.source").value("DUCKPGQ"))
+            .andExpect(jsonPath("$.meta.relationFamily").value("ALL_RELATIONS"))
+            .andExpect(jsonPath("$.meta.rankingStrategy").value("FULL_DATABASE_GRAPH"))
+            .andExpect(jsonPath("$.meta.candidateEdgeCount").value(10))
+            .andExpect(jsonPath("$.meta.truncated").value(false));
+    }
+
+    @Test
     void expand_shouldExcludeKnownNodesFromNodesButReturnNewEdgesToThem() throws Exception {
         String payload = """
             {

@@ -47,6 +47,10 @@ public class InvestigationService {
         return graphExpansionService.expand(request);
     }
 
+    public GraphExpandResponse fullGraph(boolean includeAttributes) {
+        return graphExpansionService.fullGraph(includeAttributes);
+    }
+
     public GraphExpandPreviewResponse expandPreview(GraphExpandRequest request) {
         return graphExpansionService.preview(request);
     }

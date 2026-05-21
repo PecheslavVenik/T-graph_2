@@ -18,6 +18,7 @@ import com.pm.graph_api_v2.dto.GraphNodeDto;
 import com.pm.graph_api_v2.exception.ApiBadRequestException;
 import com.pm.graph_api_v2.exception.ApiNotFoundException;
 import com.pm.graph_api_v2.metrics.GraphMetrics;
+import com.pm.graph_api_v2.repository.GraphEdgeRepository;
 import com.pm.graph_api_v2.repository.GraphNodeRepository;
 import com.pm.graph_api_v2.repository.GraphQueryBackend;
 import com.pm.graph_api_v2.repository.model.EdgeRow;
@@ -42,8 +43,10 @@ import java.util.stream.Collectors;
 public class GraphExpansionService {
 
     private static final String UNKNOWN_NODE_TYPE = "UNKNOWN";
+    private static final String FULL_DATABASE_STRATEGY = "FULL_DATABASE_GRAPH";
 
     private final GraphNodeRepository nodeRepository;
+    private final GraphEdgeRepository edgeRepository;
     private final GraphQueryBackend graphQueryBackend;
     private final GraphDtoMapper graphDtoMapper;
     private final GraphExpandPlanner graphExpandPlanner;
@@ -52,6 +55,7 @@ public class GraphExpansionService {
     private final GraphMetrics graphMetrics;
 
     public GraphExpansionService(GraphNodeRepository nodeRepository,
+                                 GraphEdgeRepository edgeRepository,
                                  GraphQueryBackend graphQueryBackend,
                                  GraphDtoMapper graphDtoMapper,
                                  GraphExpandPlanner graphExpandPlanner,
@@ -59,6 +63,7 @@ public class GraphExpansionService {
                                  GraphProperties graphProperties,
                                  GraphMetrics graphMetrics) {
         this.nodeRepository = nodeRepository;
+        this.edgeRepository = edgeRepository;
         this.graphQueryBackend = graphQueryBackend;
         this.graphDtoMapper = graphDtoMapper;
         this.graphExpandPlanner = graphExpandPlanner;
@@ -76,6 +81,40 @@ public class GraphExpansionService {
             return expandPrepared(context, prepareCandidates(context));
         } finally {
             graphMetrics.stopTimer(sample, "expand");
+        }
+    }
+
+    public GraphExpandResponse fullGraph(boolean includeAttributes) {
+        long startedAt = System.nanoTime();
+        var sample = graphMetrics.startTimer();
+
+        try {
+            List<GraphNodeDto> nodes = nodeRepository.findAllNodes().stream()
+                .map(row -> graphDtoMapper.toNodeDto(row, includeAttributes))
+                .toList();
+            List<GraphEdgeDto> edges = edgeRepository.findAllEdges().stream()
+                .map(row -> graphDtoMapper.toEdgeDto(row, includeAttributes))
+                .toList();
+
+            GraphMetaDto meta = new GraphMetaDto(
+                false,
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
+                graphQueryBackend.source(),
+                GraphRelationFamilies.ALL_RELATIONS,
+                FULL_DATABASE_STRATEGY,
+                edges.size(),
+                nodes.size(),
+                edges.size(),
+                List.of()
+            );
+
+            graphMetrics.recordCandidateEdgeCount(edges.size());
+            graphMetrics.recordNodeCount(nodes.size());
+            graphMetrics.recordEdgeCount(edges.size());
+
+            return new GraphExpandResponse(nodes, edges, meta);
+        } finally {
+            graphMetrics.stopTimer(sample, "full_graph");
         }
     }
 

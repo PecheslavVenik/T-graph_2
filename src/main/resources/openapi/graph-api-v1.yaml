@@ -24,6 +24,27 @@ paths:
                 $ref: '#/components/schemas/GraphExpandResponse'
         '503':
           description: DuckPGQ is required but unavailable
+  /graph/full:
+    get:
+      summary: Return the entire canonical graph database
+      description: >
+        Returns every node from g_nodes and every edge from g_edges without requiring
+        seeds, filters, or traversal. This endpoint is intended for frontend "show the
+        whole database graph" views and does not apply maxNodes/maxEdges guardrails.
+      parameters:
+        - name: includeAttributes
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Entire graph database as nodes and edges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphExpandResponse'
   /graph/expand/preview:
     post:
       summary: Preview smart 1-hop expansion with the same filters and exclude context as expand

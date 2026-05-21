@@ -46,6 +46,11 @@ public class GraphController {
         return investigationService.expand(request);
     }
 
+    @GetMapping("/full")
+    public GraphExpandResponse fullGraph(@RequestParam(defaultValue = "true") boolean includeAttributes) {
+        return investigationService.fullGraph(includeAttributes);
+    }
+
     @PostMapping("/expand/preview")
     public GraphExpandPreviewResponse expandPreview(@Valid @RequestBody GraphExpandRequest request) {
         return investigationService.expandPreview(request);

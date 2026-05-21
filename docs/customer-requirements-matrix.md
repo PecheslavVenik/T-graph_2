@@ -3,6 +3,7 @@
 | Требование заказчика | Ответственность backend/frontend | Backend endpoint/модуль | Статус |
 | --- | --- | --- | --- |
 | 1-hop исследование по `id` / `phone_no` / `party_rk` | Backend резолвит seed identifiers и возвращает bounded graph slice; frontend выбирает seed и отображает результат | `POST /api/v1/graph/expand`, `SeedRef`, `GraphRequestNormalizer`, `GraphExpansionService`, `GraphNodeRepository` | Поддержано для `NODE_ID`/aliases, `PHONE_NO`, `PARTY_RK` и других identifier types из `g_identifiers` |
+| Полный вывод всей graph database для frontend canvas | Backend возвращает все `g_nodes` и все `g_edges` без seed-ов, фильтров и лимитов; frontend мержит/рендерит по stable IDs | `GET /api/v1/graph/full`, `GraphExpansionService`, `GraphNodeRepository`, `GraphEdgeRepository` | Поддержано |
 | Фильтры по связям | Backend применяет `relationFamily`, `edgeTypes`, `direction`; frontend дает controls и показывает active filters | `GraphExpandRequest`, `GraphPathService`, `GraphQueryBackend.findExpandEdges` | Поддержано |
 | Shortest path | Backend ищет bounded minimum-hop path; frontend задает source/target/maxDepth и визуализирует путь | `POST /api/v1/graph/shortest-path`, `GraphPathService`, `GraphBackendPathSearch` | Поддержано |
 | Stable `nodeId`/`edgeId` для frontend merge | Backend возвращает стабильные идентификаторы и генерирует deterministic edge id при CSV import без `edge_id`; frontend делает merge/dedupe по этим id | `GraphNodeDto`, `GraphEdgeDto`, `StableIdUtil`, `GraphImportService` | Поддержано |
