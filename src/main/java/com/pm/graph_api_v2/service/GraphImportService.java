@@ -111,7 +111,14 @@ public class GraphImportService {
         List<Map<String, String>> sampleRows = new ArrayList<>();
 
         for (int index = 1; index < records.size(); index++) {
-            Map<String, String> row = toRow(headers, records.get(index));
+            List<String> record = records.get(index);
+            int rowNumber = index + 1;
+            if (record.size() > headers.size()) {
+                addError(errors, rowNumber, "ROW", "CSV row has more values than header columns");
+                continue;
+            }
+
+            Map<String, String> row = toRow(headers, record);
             if (isEmptyRow(row)) {
                 continue;
             }
@@ -119,7 +126,6 @@ public class GraphImportService {
                 sampleRows.add(row);
             }
 
-            int rowNumber = index + 1;
             String recordType = value(row, "record_type").toUpperCase(Locale.ROOT);
             if (!recordType.isBlank() && !"NODE".equals(recordType) && !"EDGE".equals(recordType)) {
                 addError(errors, rowNumber, "ROW", "record_type must be NODE or EDGE");
@@ -167,7 +173,9 @@ public class GraphImportService {
         String phoneNo = first(row, "phone_no", "phone");
         ParsedValue<Double> pagerankScore = parseDouble(row, "pagerank_score", 0, rowNumber, "NODE", errors);
         ParsedValue<Double> hubScore = parseDouble(row, "hub_score", 0, rowNumber, "NODE", errors);
-        if (!pagerankScore.valid() || !hubScore.valid()) {
+        ParsedValue<Boolean> blacklist = parseBoolean(row, false, rowNumber, "NODE", errors, "is_blacklist", "blacklist");
+        ParsedValue<Boolean> vip = parseBoolean(row, false, rowNumber, "NODE", errors, "is_vip", "vip");
+        if (!pagerankScore.valid() || !hubScore.valid() || !blacklist.valid() || !vip.valid()) {
             return;
         }
 
@@ -179,8 +187,8 @@ public class GraphImportService {
             first(row, "person_id"),
             phoneNo,
             first(row, "full_name"),
-            parseBoolean(first(row, "is_blacklist", "blacklist"), false),
-            parseBoolean(first(row, "is_vip", "vip"), false),
+            blacklist.value(),
+            vip.value(),
             first(row, "employer"),
             first(row, "city"),
             firstOrDefault(row, "file_import", "source_system"),
@@ -216,10 +224,10 @@ public class GraphImportService {
         if (relationFamily == null) {
             relationFamily = GraphRelationFamilies.ALL_RELATIONS;
         }
-        boolean directed = parseBoolean(first(row, "directed"), true);
+        ParsedValue<Boolean> parsedDirected = parseBoolean(row, true, rowNumber, "EDGE", errors, "directed");
         String edgeId = first(row, "edge_id");
         if (edgeId == null) {
-            edgeId = StableIdUtil.stableEdgeId(null, fromNodeId, toNodeId, normalizedEdgeType, directed, relationFamily);
+            edgeId = StableIdUtil.stableEdgeId(null, fromNodeId, toNodeId, normalizedEdgeType, parsedDirected.value(), relationFamily);
         }
 
         ParsedValue<Long> txCount = parseLong(row, "tx_count", 0, rowNumber, "EDGE", errors);
@@ -228,7 +236,8 @@ public class GraphImportService {
         ParsedValue<Long> evidenceCount = parseLong(row, "evidence_count", 0, rowNumber, "EDGE", errors);
         ParsedValue<Instant> firstSeenAt = parseInstant(row, "first_seen_at", rowNumber, "EDGE", errors);
         ParsedValue<Instant> lastSeenAt = parseInstant(row, "last_seen_at", rowNumber, "EDGE", errors);
-        if (!txCount.valid()
+        if (!parsedDirected.valid()
+            || !txCount.valid()
             || !txSum.valid()
             || !strengthScore.valid()
             || !evidenceCount.valid()
@@ -242,7 +251,7 @@ public class GraphImportService {
             fromNodeId,
             toNodeId,
             normalizedEdgeType,
-            directed,
+            parsedDirected.value(),
             txCount.value(),
             txSum.value(),
             relationFamily,
@@ -351,6 +360,7 @@ public class GraphImportService {
         List<String> row = new ArrayList<>();
         StringBuilder cell = new StringBuilder();
         boolean quoted = false;
+        boolean quoteClosed = false;
 
         for (int index = 0; index < content.length(); index++) {
             char ch = content.charAt(index);
@@ -361,11 +371,38 @@ public class GraphImportService {
                         index++;
                     } else {
                         quoted = false;
+                        quoteClosed = true;
                     }
                 } else {
                     cell.append(ch);
                 }
+            } else if (quoteClosed) {
+                if (ch == ',') {
+                    row.add(cell.toString());
+                    cell.setLength(0);
+                    quoteClosed = false;
+                } else if (ch == '\n') {
+                    row.add(cell.toString());
+                    rows.add(row);
+                    row = new ArrayList<>();
+                    cell.setLength(0);
+                    quoteClosed = false;
+                } else if (ch == '\r') {
+                    row.add(cell.toString());
+                    rows.add(row);
+                    row = new ArrayList<>();
+                    cell.setLength(0);
+                    quoteClosed = false;
+                    if (index + 1 < content.length() && content.charAt(index + 1) == '\n') {
+                        index++;
+                    }
+                } else if (!Character.isWhitespace(ch)) {
+                    throw new ApiBadRequestException("Malformed CSV: unexpected character after closing quote");
+                }
             } else if (ch == '"') {
+                if (cell.length() > 0) {
+                    throw new ApiBadRequestException("Malformed CSV: quote must start a quoted value");
+                }
                 quoted = true;
             } else if (ch == ',') {
                 row.add(cell.toString());
@@ -375,9 +412,20 @@ public class GraphImportService {
                 rows.add(row);
                 row = new ArrayList<>();
                 cell.setLength(0);
-            } else if (ch != '\r') {
+            } else if (ch == '\r') {
+                row.add(cell.toString());
+                rows.add(row);
+                row = new ArrayList<>();
+                cell.setLength(0);
+                if (index + 1 < content.length() && content.charAt(index + 1) == '\n') {
+                    index++;
+                }
+            } else {
                 cell.append(ch);
             }
+        }
+        if (quoted) {
+            throw new ApiBadRequestException("Malformed CSV: unclosed quoted value");
         }
         row.add(cell.toString());
         if (!isCsvRowEmpty(row)) {
@@ -388,10 +436,14 @@ public class GraphImportService {
 
     private List<String> normalizeHeaders(List<String> rawHeaders) {
         List<String> headers = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
         for (String rawHeader : rawHeaders) {
             String normalized = normalizeColumn(rawHeader);
             if (normalized.isBlank()) {
                 throw new ApiBadRequestException("CSV header contains a blank column name");
+            }
+            if (!seen.add(normalized)) {
+                throw new ApiBadRequestException("CSV header contains duplicate column: " + normalized);
             }
             headers.add(normalized);
         }
@@ -529,12 +581,42 @@ public class GraphImportService {
         return value.trim();
     }
 
-    private boolean parseBoolean(String value, boolean fallback) {
+    private ParsedValue<Boolean> parseBoolean(Map<String, String> row,
+                                              boolean fallback,
+                                              int rowNumber,
+                                              String section,
+                                              List<GraphImportErrorDto> errors,
+                                              String... fields) {
+        String field = firstPresentField(row, fields);
+        if (field == null) {
+            return ParsedValue.valid(fallback);
+        }
+
+        String value = row.get(field);
         String normalized = trimToNull(value);
         if (normalized == null) {
-            return fallback;
+            return ParsedValue.valid(fallback);
         }
-        return "true".equalsIgnoreCase(normalized) || "1".equals(normalized) || "yes".equalsIgnoreCase(normalized);
+
+        String lower = normalized.toLowerCase(Locale.ROOT);
+        if ("true".equals(lower) || "1".equals(lower) || "yes".equals(lower)) {
+            return ParsedValue.valid(true);
+        }
+        if ("false".equals(lower) || "0".equals(lower) || "no".equals(lower)) {
+            return ParsedValue.valid(false);
+        }
+
+        addFieldError(errors, rowNumber, section, field, value, field + " must be a boolean");
+        return ParsedValue.invalid(fallback);
+    }
+
+    private String firstPresentField(Map<String, String> row, String... fields) {
+        for (String field : fields) {
+            if (trimToNull(row.get(field)) != null) {
+                return field;
+            }
+        }
+        return null;
     }
 
     private ParsedValue<Long> parseLong(Map<String, String> row,

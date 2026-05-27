@@ -109,6 +109,19 @@ public class GraphExportService {
         if (raw == null) {
             return "";
         }
-        return '"' + raw.replace("\"", "\"\"") + '"';
+        String value = escapeSpreadsheetFormula(raw);
+        return '"' + value.replace("\"", "\"\"") + '"';
+    }
+
+    private String escapeSpreadsheetFormula(String raw) {
+        String stripped = raw.stripLeading();
+        if (!stripped.isEmpty() && isSpreadsheetFormulaPrefix(stripped.charAt(0))) {
+            return "'" + raw;
+        }
+        return raw;
+    }
+
+    private boolean isSpreadsheetFormulaPrefix(char ch) {
+        return ch == '=' || ch == '+' || ch == '-' || ch == '@';
     }
 }

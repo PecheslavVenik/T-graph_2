@@ -534,6 +534,58 @@ class GraphControllerIntegrationTest {
     }
 
     @Test
+    void importPreview_shouldRejectMalformedCsvSyntax() throws Exception {
+        String csv = """
+            record_type,node_id,node_type,display_name
+            NODE,N_IMPORT_BROKEN,PERSON,"Broken name
+            """;
+
+        mockMvc.perform(multipart("/api/v1/graph/import/preview")
+                .file(csvFile(csv)))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
+            .andExpect(jsonPath("$.message", containsString("unclosed quoted value")));
+    }
+
+    @Test
+    void importPreview_shouldRejectDuplicateHeaders() throws Exception {
+        String csv = """
+            record_type,node_id,node_id,node_type
+            NODE,N_IMPORT_DUPLICATE,N_IMPORT_DUPLICATE_ALIAS,PERSON
+            """;
+
+        mockMvc.perform(multipart("/api/v1/graph/import/preview")
+                .file(csvFile(csv)))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
+            .andExpect(jsonPath("$.message", containsString("duplicate column")));
+    }
+
+    @Test
+    void importPreview_shouldReportExtraColumnsAndInvalidBooleans() throws Exception {
+        String csv = """
+            record_type,node_id,node_type,display_name,is_vip,from_node_id,to_node_id,edge_id,edge_type,directed
+            NODE,N_IMPORT_BAD_BOOL,PERSON,Bad Boolean,maybe,,,,,
+            EDGE,,,,,N_PARTY_1001,N_PARTY_1002,E_IMPORT_BAD_BOOL,KNOWS,maybe
+            NODE,N_IMPORT_TOO_MANY,PERSON,Too Many,false,,,,,,extra-column
+            """;
+
+        mockMvc.perform(multipart("/api/v1/graph/import/preview")
+                .file(csvFile(csv)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("PREVIEW"))
+            .andExpect(jsonPath("$.parsedNodeCount").value(0))
+            .andExpect(jsonPath("$.parsedEdgeCount").value(0))
+            .andExpect(jsonPath("$.invalidRowCount").value(3))
+            .andExpect(jsonPath("$.errors.length()").value(3))
+            .andExpect(jsonPath("$.errors[0].field").value("is_vip"))
+            .andExpect(jsonPath("$.errors[0].value").value("maybe"))
+            .andExpect(jsonPath("$.errors[1].field").value("directed"))
+            .andExpect(jsonPath("$.errors[1].value").value("maybe"))
+            .andExpect(jsonPath("$.errors[2].message").value("CSV row has more values than header columns"));
+    }
+
+    @Test
     void importCommit_shouldReturnBadRequestWithFieldErrorsForInvalidCsv() throws Exception {
         String csv = """
             record_type,node_id,node_type,display_name,pagerank_score,from_node_id,to_node_id,edge_id,edge_type,relation_family,directed,tx_count,tx_sum,first_seen_at
@@ -863,6 +915,27 @@ class GraphControllerIntegrationTest {
             .andExpect(header().string("Content-Disposition", containsString("graph-export.csv")))
             .andExpect(content().contentType("text/csv"))
             .andExpect(content().string(containsString("section,node_id,node_type,display_name")));
+    }
+
+    @Test
+    void exportCsv_shouldEscapeSpreadsheetFormulaValues() throws Exception {
+        String payload = """
+            {
+              "nodes": [
+                {
+                  "nodeId": "N1",
+                  "displayName": "=HYPERLINK(\\"https://example.test\\")"
+                }
+              ],
+              "edges": []
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/graph/export?format=CSV")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+            .andExpect(status().isOk())
+            .andExpect(content().string(containsString("\"'=HYPERLINK(\"\"https://example.test\"\")\"")));
     }
 
     @Test
